@@ -8,23 +8,29 @@ const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 
 const app = express();
-const PORT = process.env.PORT || 5002;
+const PORT = process.env.PORT || 10000;
 
-app.use(cors());
+/* ===========================
+   CORS CONFIG (Production Safe)
+=========================== */
+app.use(cors({
+  origin: "*",
+  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization"]
+}));
+
 app.use(express.json());
 
-/* =====================================================
-   ✅ MONGODB CONNECTION
-===================================================== */
-
+/* ===========================
+   MONGODB CONNECTION
+=========================== */
 mongoose.connect(process.env.MONGO_URI)
   .then(() => console.log("✅ MongoDB Connected"))
   .catch(err => console.error("❌ MongoDB Error:", err));
 
-/* =====================================================
-   ✅ ORDER SCHEMA
-===================================================== */
-
+/* ===========================
+   ORDER SCHEMA
+=========================== */
 const orderSchema = new mongoose.Schema({
   customerName: String,
   email: String,
@@ -44,59 +50,9 @@ const orderSchema = new mongoose.Schema({
 
 const Order = mongoose.model("Order", orderSchema);
 
-/* =====================================================
-   ✅ ADMIN SCHEMA
-===================================================== */
-
-const adminSchema = new mongoose.Schema({
-  email: String,
-  password: String
-});
-
-const Admin = mongoose.model("Admin", adminSchema);
-
-/* =====================================================
-   ✅ ADMIN REGISTER (One-time use)
-===================================================== */
-
-app.post("/api/admin/register", async (req, res) => {
-  const { email, password } = req.body;
-
-  const hashedPassword = await bcrypt.hash(password, 10);
-
-  const admin = new Admin({
-    email,
-    password: hashedPassword
-  });
-
-  await admin.save();
-  res.json({ message: "Admin created successfully" });
-});
-
-/* =====================================================
-   ✅ ADMIN LOGIN
-===================================================== */
-
-app.post("/api/admin/login", async (req, res) => {
-  const { email, password } = req.body;
-
-  const admin = await Admin.findOne({ email });
-  if (!admin) return res.status(400).json({ message: "Admin not found" });
-
-  const isMatch = await bcrypt.compare(password, admin.password);
-  if (!isMatch) return res.status(400).json({ message: "Invalid credentials" });
-
-  const token = jwt.sign({ id: admin._id }, process.env.JWT_SECRET, {
-    expiresIn: "1d"
-  });
-
-  res.json({ token });
-});
-
-/* =====================================================
-   ✅ PAYSTACK INITIALIZE PAYMENT
-===================================================== */
-
+/* ===========================
+   PAYSTACK INITIALIZE
+=========================== */
 app.post("/initialize-payment", async (req, res) => {
   const { email, amount } = req.body;
 
@@ -122,10 +78,9 @@ app.post("/initialize-payment", async (req, res) => {
   }
 });
 
-/* =====================================================
-   ✅ PAYSTACK VERIFY + SAVE ORDER
-===================================================== */
-
+/* ===========================
+   VERIFY PAYMENT + SAVE ORDER
+=========================== */
 app.post("/verify-payment", async (req, res) => {
   const { reference, orderData } = req.body;
 
@@ -161,19 +116,17 @@ app.post("/verify-payment", async (req, res) => {
   }
 });
 
-/* =====================================================
-   ✅ GET ALL ORDERS (Admin)
-===================================================== */
-
+/* ===========================
+   GET ORDERS
+=========================== */
 app.get("/api/orders", async (req, res) => {
   const orders = await Order.find().sort({ createdAt: -1 });
   res.json(orders);
 });
 
-/* =====================================================
-   ✅ START SERVER
-===================================================== */
-
+/* ===========================
+   START SERVER
+=========================== */
 app.listen(PORT, () => {
   console.log(`🚀 Server running on port ${PORT}`);
 });
