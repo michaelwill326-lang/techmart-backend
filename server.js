@@ -27,6 +27,22 @@ mongoose.connect(process.env.MONGO_URI)
   .catch(err => console.error("❌ MongoDB Error:", err));
 
 /* ===========================
+   ORDER SCHEMA
+=========================== */
+const orderSchema = new mongoose.Schema({
+  customerName: String,
+  email: String,
+  address: String,
+  items: Array,
+  totalAmount: Number,
+  paymentReference: String,
+  status: { type: String, default: "Paid" },
+  createdAt: { type: Date, default: Date.now }
+});
+
+const Order = mongoose.model("Order", orderSchema);
+
+/* ===========================
    PRODUCTS ROUTE
 =========================== */
 const products = [
@@ -67,15 +83,43 @@ app.get("/api/products", (req, res) => {
 });
 
 /* ===========================
+   GET SINGLE ORDER
+=========================== */
+app.get("/api/orders/:id", async (req, res) => {
+
+  try {
+
+    const order = await Order.findById(req.params.id);
+
+    if (!order) {
+      return res.status(404).json({ error: "Order not found" });
+    }
+
+    res.json(order);
+
+  } catch (err) {
+
+    res.status(404).json({ error: "Order not found" });
+
+  }
+
+});
+
+/* ===========================
    PAYSTACK INITIALIZE
 =========================== */
 app.post("/initialize-payment", async (req, res) => {
+
   const { email, amount } = req.body;
 
   try {
+
     const response = await axios.post(
       "https://api.paystack.co/transaction/initialize",
-      { email, amount: amount * 100 },
+      {
+        email,
+        amount: Math.round(amount * 100)
+      },
       {
         headers: {
           Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}`,
@@ -85,19 +129,28 @@ app.post("/initialize-payment", async (req, res) => {
     );
 
     res.json(response.data);
+
   } catch (error) {
+
     console.error("Paystack Init Error:", error.response?.data || error.message);
-    res.status(500).json({ error: "Payment initialization failed" });
+
+    res.status(500).json({
+      error: "Payment initialization failed"
+    });
+
   }
+
 });
 
 /* ===========================
-   VERIFY PAYMENT
+   VERIFY PAYMENT + SAVE ORDER
 =========================== */
 app.post("/verify-payment", async (req, res) => {
-  const { reference } = req.body;
+
+  const { reference, orderData } = req.body;
 
   try {
+
     const response = await axios.get(
       `https://api.paystack.co/transaction/verify/${reference}`,
       {
@@ -109,21 +162,49 @@ app.post("/verify-payment", async (req, res) => {
 
     const paymentData = response.data.data;
 
+    console.log("Paystack verification:", paymentData);
+
     if (paymentData.status === "success") {
-      res.json({ success: true });
-    } else {
-      res.json({ success: false });
+
+      const newOrder = new Order({
+        customerName: orderData.customerName,
+        email: orderData.email,
+        address: orderData.address,
+        items: orderData.items,
+        totalAmount: orderData.totalAmount,
+        paymentReference: reference,
+        status: "Paid"
+      });
+
+      const savedOrder = await newOrder.save();
+
+      return res.json({
+        success: true,
+        orderId: savedOrder._id
+      });
+
     }
 
+    return res.json({ success: false });
+
   } catch (error) {
+
     console.error("Verification Error:", error.response?.data || error.message);
-    res.status(500).json({ error: "Verification failed" });
+
+    return res.status(500).json({
+      success: false,
+      error: "Verification failed"
+    });
+
   }
+
 });
 
 /* ===========================
    START SERVER
 =========================== */
 app.listen(PORT, () => {
+
   console.log(`🚀 Server running on port ${PORT}`);
+
 });
