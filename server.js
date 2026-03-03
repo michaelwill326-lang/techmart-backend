@@ -4,14 +4,12 @@ const express = require("express");
 const cors = require("cors");
 const mongoose = require("mongoose");
 const axios = require("axios");
-const bcrypt = require("bcryptjs");
-const jwt = require("jsonwebtoken");
 
 const app = express();
 const PORT = process.env.PORT || 10000;
 
 /* ===========================
-   CORS CONFIG (Production Safe)
+   CORS
 =========================== */
 app.use(cors({
   origin: "*",
@@ -22,33 +20,51 @@ app.use(cors({
 app.use(express.json());
 
 /* ===========================
-   MONGODB CONNECTION
+   MONGODB
 =========================== */
 mongoose.connect(process.env.MONGO_URI)
   .then(() => console.log("✅ MongoDB Connected"))
   .catch(err => console.error("❌ MongoDB Error:", err));
 
 /* ===========================
-   ORDER SCHEMA
+   PRODUCTS ROUTE
 =========================== */
-const orderSchema = new mongoose.Schema({
-  customerName: String,
-  email: String,
-  address: String,
-  items: [
-    {
-      name: String,
-      quantity: Number,
-      price: Number
-    }
-  ],
-  totalAmount: Number,
-  paymentReference: String,
-  paymentStatus: { type: String, default: "Pending" },
-  createdAt: { type: Date, default: Date.now }
-});
+const products = [
+  {
+    id: 1,
+    name: "Wireless Headphones",
+    price: 99.99,
+    description: "Noise-cancelling over-ear headphones with Bluetooth."
+  },
+  {
+    id: 2,
+    name: "Smart Watch",
+    price: 149.99,
+    description: "Fitness tracking and notifications on your wrist."
+  },
+  {
+    id: 3,
+    name: "Mechanical Keyboard",
+    price: 79.99,
+    description: "RGB backlit keyboard with tactile switches."
+  },
+  {
+    id: 4,
+    name: "4K Monitor",
+    price: 299.99,
+    description: "27-inch UHD display with HDR support."
+  },
+  {
+    id: 5,
+    name: "Gaming Mouse",
+    price: 49.99,
+    description: "High DPI precision with customizable buttons."
+  }
+];
 
-const Order = mongoose.model("Order", orderSchema);
+app.get("/api/products", (req, res) => {
+  res.json(products);
+});
 
 /* ===========================
    PAYSTACK INITIALIZE
@@ -59,10 +75,7 @@ app.post("/initialize-payment", async (req, res) => {
   try {
     const response = await axios.post(
       "https://api.paystack.co/transaction/initialize",
-      {
-        email,
-        amount: amount * 100
-      },
+      { email, amount: amount * 100 },
       {
         headers: {
           Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}`,
@@ -79,10 +92,10 @@ app.post("/initialize-payment", async (req, res) => {
 });
 
 /* ===========================
-   VERIFY PAYMENT + SAVE ORDER
+   VERIFY PAYMENT
 =========================== */
 app.post("/verify-payment", async (req, res) => {
-  const { reference, orderData } = req.body;
+  const { reference } = req.body;
 
   try {
     const response = await axios.get(
@@ -97,14 +110,6 @@ app.post("/verify-payment", async (req, res) => {
     const paymentData = response.data.data;
 
     if (paymentData.status === "success") {
-      const newOrder = new Order({
-        ...orderData,
-        paymentReference: reference,
-        paymentStatus: "Paid"
-      });
-
-      await newOrder.save();
-
       res.json({ success: true });
     } else {
       res.json({ success: false });
@@ -114,14 +119,6 @@ app.post("/verify-payment", async (req, res) => {
     console.error("Verification Error:", error.response?.data || error.message);
     res.status(500).json({ error: "Verification failed" });
   }
-});
-
-/* ===========================
-   GET ORDERS
-=========================== */
-app.get("/api/orders", async (req, res) => {
-  const orders = await Order.find().sort({ createdAt: -1 });
-  res.json(orders);
 });
 
 /* ===========================
