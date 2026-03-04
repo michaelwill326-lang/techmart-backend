@@ -24,7 +24,7 @@ app.use(cors({
 app.use(express.json());
 
 /* ===========================
-   MONGODB CONNECTION
+   MONGODB
 =========================== */
 
 mongoose.connect(process.env.MONGO_URI)
@@ -111,9 +111,7 @@ stock:30
 =========================== */
 
 app.get("/api/products",(req,res)=>{
-
-res.json(products);
-
+  res.json(products);
 });
 
 /* ===========================
@@ -158,9 +156,7 @@ return res.status(404).json({error:"Order not found"});
 res.json(order);
 
 }catch(err){
-
 res.status(404).json({error:"Order not found"});
-
 }
 
 });
@@ -174,11 +170,9 @@ app.put("/api/orders/:id/status",async(req,res)=>{
 const {status}=req.body;
 
 const order=await Order.findByIdAndUpdate(
-
 req.params.id,
 {status},
 {new:true}
-
 );
 
 res.json(order);
@@ -186,7 +180,7 @@ res.json(order);
 });
 
 /* ===========================
-   EXPORT CSV
+   EXPORT ORDERS CSV
 =========================== */
 
 app.get("/api/orders/export",async(req,res)=>{
@@ -196,9 +190,7 @@ const orders=await Order.find();
 let csv="Customer,Email,Total,Status,Date\n";
 
 orders.forEach(o=>{
-
 csv+=`${o.customerName},${o.email},${o.totalAmount},${o.status},${o.createdAt}\n`;
-
 });
 
 res.header("Content-Type","text/csv");
@@ -225,6 +217,70 @@ const total=orders.reduce((sum,o)=>sum+o.totalAmount,0);
 
 res.json({
 thisMonth:total
+});
+
+});
+
+/* ===========================
+   SALES CHART ANALYTICS
+=========================== */
+
+app.get("/api/revenue/chart",async(req,res)=>{
+
+const orders=await Order.find({status:"Paid"});
+
+const days={};
+
+orders.forEach(order=>{
+
+const date=new Date(order.createdAt).toLocaleDateString();
+
+if(!days[date]){
+days[date]=0;
+}
+
+days[date]+=order.totalAmount;
+
+});
+
+res.json({
+
+labels:Object.keys(days),
+values:Object.values(days)
+
+});
+
+});
+
+/* ===========================
+   TOP SELLING PRODUCTS
+=========================== */
+
+app.get("/api/analytics/top-products",async(req,res)=>{
+
+const orders=await Order.find({status:"Paid"});
+
+const sales={};
+
+orders.forEach(order=>{
+
+order.items.forEach(item=>{
+
+if(!sales[item.name]){
+sales[item.name]=0;
+}
+
+sales[item.name]+=item.quantity;
+
+});
+
+});
+
+res.json({
+
+labels:Object.keys(sales),
+values:Object.values(sales)
+
 });
 
 });
@@ -313,7 +369,7 @@ status:"Paid"
 
 const savedOrder=await newOrder.save();
 
-/* REALTIME EVENT */
+/* REALTIME ADMIN UPDATE */
 
 io.emit("new-order",savedOrder);
 
@@ -344,7 +400,7 @@ error:"Verification failed"
 });
 
 /* ===========================
-   SOCKET.IO SERVER
+   SOCKET.IO
 =========================== */
 
 const server=http.createServer(app);
@@ -354,9 +410,7 @@ cors:{origin:"*"}
 });
 
 io.on("connection",(socket)=>{
-
 console.log("Admin connected:",socket.id);
-
 });
 
 /* ===========================
