@@ -4,6 +4,7 @@ const express = require("express");
 const cors = require("cors");
 const mongoose = require("mongoose");
 const axios = require("axios");
+const nodemailer = require("nodemailer");
 
 const http = require("http");
 const { Server } = require("socket.io");
@@ -30,7 +31,13 @@ app.use(express.json());
 mongoose.connect(process.env.MONGO_URI)
 .then(()=>console.log("✅ MongoDB Connected"))
 .catch(err=>console.error("❌ MongoDB Error:",err));
-
+const transporter = nodemailer.createTransport({
+   service:"gmail",
+   auth:{
+   user:process.env.EMAIL_USER,
+   pass:process.env.EMAIL_PASS
+   }
+   });
 /* ===========================
    ORDER SCHEMA
 =========================== */
