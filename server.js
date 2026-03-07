@@ -37,22 +37,35 @@ mongoose.connect(process.env.MONGO_URI)
 
 const orderSchema = new mongoose.Schema({
 
-  customerName:String,
-  email:String,
-  address:String,
-  items:Array,
-  totalAmount:Number,
-  paymentReference:String,
+customerName:String,
+email:String,
+address:String,
 
-  status:{
-    type:String,
-    default:"Paid"
-  },
+items:Array,
 
-  createdAt:{
-    type:Date,
-    default:Date.now
-  }
+totalAmount:Number,
+
+paymentReference:String,
+
+status:{
+type:String,
+default:"Processing"
+},
+
+trackingNumber:{
+type:String,
+default:""
+},
+
+carrier:{
+type:String,
+default:""
+},
+
+createdAt:{
+type:Date,
+default:Date.now
+}
 
 });
 
@@ -111,7 +124,7 @@ stock:30
 =========================== */
 
 app.get("/api/products",(req,res)=>{
-  res.json(products);
+res.json(products)
 });
 
 /* ===========================
@@ -120,24 +133,24 @@ app.get("/api/products",(req,res)=>{
 
 app.get("/api/orders",async(req,res)=>{
 
-const page=parseInt(req.query.page)||1;
-const limit=parseInt(req.query.limit)||50;
+const page=parseInt(req.query.page)||1
+const limit=parseInt(req.query.limit)||50
 
-const skip=(page-1)*limit;
+const skip=(page-1)*limit
 
 const orders=await Order.find()
 .sort({createdAt:-1})
 .skip(skip)
-.limit(limit);
+.limit(limit)
 
-const total=await Order.countDocuments();
+const total=await Order.countDocuments()
 
 res.json({
 orders,
 total
-});
+})
 
-});
+})
 
 /* ===========================
    GET SINGLE ORDER
@@ -147,19 +160,19 @@ app.get("/api/orders/:id",async(req,res)=>{
 
 try{
 
-const order=await Order.findById(req.params.id);
+const order=await Order.findById(req.params.id)
 
 if(!order){
-return res.status(404).json({error:"Order not found"});
+return res.status(404).json({error:"Order not found"})
 }
 
-res.json(order);
+res.json(order)
 
 }catch(err){
-res.status(404).json({error:"Order not found"});
+res.status(404).json({error:"Order not found"})
 }
 
-});
+})
 
 /* ===========================
    UPDATE ORDER STATUS
@@ -167,37 +180,81 @@ res.status(404).json({error:"Order not found"});
 
 app.put("/api/orders/:id/status",async(req,res)=>{
 
-const {status}=req.body;
+const {status}=req.body
 
 const order=await Order.findByIdAndUpdate(
 req.params.id,
 {status},
 {new:true}
-);
+)
 
-res.json(order);
+res.json(order)
 
-});
+})
 
 /* ===========================
-   EXPORT ORDERS CSV
+   UPDATE TRACKING
+=========================== */
+
+app.put("/api/orders/:id/tracking",async(req,res)=>{
+
+const {trackingNumber,carrier,status}=req.body
+
+const order=await Order.findByIdAndUpdate(
+
+req.params.id,
+
+{
+trackingNumber,
+carrier,
+status
+},
+
+{new:true}
+
+)
+
+res.json(order)
+
+})
+
+/* ===========================
+   TRACK ORDER
+=========================== */
+
+app.get("/api/track/:trackingNumber",async(req,res)=>{
+
+const order=await Order.findOne({
+trackingNumber:req.params.trackingNumber
+})
+
+if(!order){
+return res.status(404).json({error:"Tracking not found"})
+}
+
+res.json(order)
+
+})
+
+/* ===========================
+   EXPORT CSV
 =========================== */
 
 app.get("/api/orders/export",async(req,res)=>{
 
-const orders=await Order.find();
+const orders=await Order.find()
 
-let csv="Customer,Email,Total,Status,Date\n";
+let csv="Customer,Email,Total,Status,Date\n"
 
 orders.forEach(o=>{
-csv+=`${o.customerName},${o.email},${o.totalAmount},${o.status},${o.createdAt}\n`;
-});
+csv+=`${o.customerName},${o.email},${o.totalAmount},${o.status},${o.createdAt}\n`
+})
 
-res.header("Content-Type","text/csv");
-res.attachment("orders.csv");
-res.send(csv);
+res.header("Content-Type","text/csv")
+res.attachment("orders.csv")
+res.send(csv)
 
-});
+})
 
 /* ===========================
    MONTHLY REVENUE
@@ -205,52 +262,52 @@ res.send(csv);
 
 app.get("/api/revenue/monthly",async(req,res)=>{
 
-const start=new Date();
-start.setDate(1);
+const start=new Date()
+start.setDate(1)
 
 const orders=await Order.find({
-createdAt:{ $gte:start },
+createdAt:{$gte:start},
 status:"Paid"
-});
+})
 
-const total=orders.reduce((sum,o)=>sum+o.totalAmount,0);
+const total=orders.reduce((sum,o)=>sum+o.totalAmount,0)
 
 res.json({
 thisMonth:total
-});
+})
 
-});
+})
 
 /* ===========================
-   SALES CHART ANALYTICS
+   SALES CHART
 =========================== */
 
 app.get("/api/revenue/chart",async(req,res)=>{
 
-const orders=await Order.find({status:"Paid"});
+const orders=await Order.find({status:"Paid"})
 
-const days={};
+const days={}
 
 orders.forEach(order=>{
 
-const date=new Date(order.createdAt).toLocaleDateString();
+const date=new Date(order.createdAt).toLocaleDateString()
 
 if(!days[date]){
-days[date]=0;
+days[date]=0
 }
 
-days[date]+=order.totalAmount;
+days[date]+=order.totalAmount
 
-});
+})
 
 res.json({
 
 labels:Object.keys(days),
 values:Object.values(days)
 
-});
+})
 
-});
+})
 
 /* ===========================
    TOP SELLING PRODUCTS
@@ -258,32 +315,32 @@ values:Object.values(days)
 
 app.get("/api/analytics/top-products",async(req,res)=>{
 
-const orders=await Order.find({status:"Paid"});
+const orders=await Order.find({status:"Paid"})
 
-const sales={};
+const sales={}
 
 orders.forEach(order=>{
 
 order.items.forEach(item=>{
 
 if(!sales[item.name]){
-sales[item.name]=0;
+sales[item.name]=0
 }
 
-sales[item.name]+=item.quantity;
+sales[item.name]+=item.quantity
 
-});
+})
 
-});
+})
 
 res.json({
 
 labels:Object.keys(sales),
 values:Object.values(sales)
 
-});
+})
 
-});
+})
 
 /* ===========================
    PAYSTACK INITIALIZE
@@ -291,7 +348,7 @@ values:Object.values(sales)
 
 app.post("/initialize-payment",async(req,res)=>{
 
-const {email,amount}=req.body;
+const {email,amount}=req.body
 
 try{
 
@@ -311,21 +368,21 @@ Authorization:`Bearer ${process.env.PAYSTACK_SECRET_KEY}`,
 }
 }
 
-);
+)
 
-res.json(response.data);
+res.json(response.data)
 
 }catch(error){
 
-console.error("Paystack Init Error:",error.response?.data||error.message);
+console.error("Paystack Init Error:",error.response?.data||error.message)
 
 res.status(500).json({
 error:"Payment initialization failed"
-});
+})
 
 }
 
-});
+})
 
 /* ===========================
    VERIFY PAYMENT
@@ -333,7 +390,7 @@ error:"Payment initialization failed"
 
 app.post("/verify-payment",async(req,res)=>{
 
-const {reference,orderData}=req.body;
+const {reference,orderData}=req.body
 
 try{
 
@@ -347,11 +404,11 @@ Authorization:`Bearer ${process.env.PAYSTACK_SECRET_KEY}`
 }
 }
 
-);
+)
 
-const paymentData=response.data.data;
+const paymentData=response.data.data
 
-console.log("Paystack verification:",paymentData);
+console.log("Paystack verification:",paymentData)
 
 if(paymentData.status==="success"){
 
@@ -365,53 +422,51 @@ totalAmount:orderData.totalAmount,
 paymentReference:reference,
 status:"Paid"
 
-});
+})
 
-const savedOrder=await newOrder.save();
+const savedOrder=await newOrder.save()
 
-/* REALTIME ADMIN UPDATE */
-
-io.emit("new-order",savedOrder);
+io.emit("new-order",savedOrder)
 
 return res.json({
 
 success:true,
 orderId:savedOrder._id
 
-});
+})
 
 }
 
-return res.json({success:false});
+return res.json({success:false})
 
 }catch(error){
 
-console.error("Verification Error:",error.response?.data||error.message);
+console.error("Verification Error:",error.response?.data||error.message)
 
 return res.status(500).json({
 
 success:false,
 error:"Verification failed"
 
-});
+})
 
 }
 
-});
+})
 
 /* ===========================
    SOCKET.IO
 =========================== */
 
-const server=http.createServer(app);
+const server=http.createServer(app)
 
 const io=new Server(server,{
 cors:{origin:"*"}
-});
+})
 
 io.on("connection",(socket)=>{
-console.log("Admin connected:",socket.id);
-});
+console.log("Admin connected:",socket.id)
+})
 
 /* ===========================
    START SERVER
@@ -419,6 +474,6 @@ console.log("Admin connected:",socket.id);
 
 server.listen(PORT,()=>{
 
-console.log(`🚀 Server running on port ${PORT}`);
+console.log(`🚀 Server running on port ${PORT}`)
 
-});
+})
