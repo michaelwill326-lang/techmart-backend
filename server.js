@@ -22,7 +22,7 @@ const PORT = process.env.PORT || 10000
 
 app.use(cors({
 origin:"*",
-methods:["GET","POST","PUT","DELETE","OPTIONS"],
+methods:["GET","POST","PUT","DELETE"],
 allowedHeaders:["Content-Type","Authorization"]
 }))
 
@@ -124,6 +124,19 @@ description:String,
 stock:Number,
 image:String,
 
+reviews:[{
+
+name:String,
+rating:Number,
+comment:String,
+
+createdAt:{
+type:Date,
+default:Date.now
+}
+
+}],
+
 createdAt:{
 type:Date,
 default:Date.now
@@ -137,9 +150,9 @@ const Product = mongoose.model("Product",productSchema)
    GET PRODUCTS
 =========================== */
 
-app.get("/api/products",async(req,res)=>{
+app.get("/api/products", async (req,res)=>{
 
-const products=await Product.find()
+const products = await Product.find()
 
 res.json(products)
 
@@ -149,9 +162,9 @@ res.json(products)
    GET PRODUCT BY SLUG
 =========================== */
 
-app.get("/api/products/:slug",async(req,res)=>{
+app.get("/api/products/:slug", async (req,res)=>{
 
-const product=await Product.findOne({
+const product = await Product.findOne({
 slug:req.params.slug
 })
 
@@ -167,18 +180,18 @@ res.json(product)
    ADD PRODUCT
 =========================== */
 
-app.post("/api/products",upload.single("image"),async(req,res)=>{
+app.post("/api/products", upload.single("image"), async (req,res)=>{
 
-const {name,price,description,stock}=req.body
+const {name,price,description,stock} = req.body
 
-const slug=name
+const slug = name
 .toLowerCase()
 .replace(/[^a-z0-9]+/g,"-")
 .replace(/(^-|-$)/g,"")
 
-const image=req.file?req.file.path:""
+const image = req.file ? req.file.path : ""
 
-const product=new Product({
+const product = new Product({
 
 name,
 slug,
@@ -189,7 +202,7 @@ image
 
 })
 
-const saved=await product.save()
+const saved = await product.save()
 
 res.json(saved)
 
@@ -199,7 +212,7 @@ res.json(saved)
    DELETE PRODUCT
 =========================== */
 
-app.delete("/api/products/:id",async(req,res)=>{
+app.delete("/api/products/:id", async (req,res)=>{
 
 await Product.findByIdAndDelete(req.params.id)
 
@@ -208,10 +221,56 @@ res.json({success:true})
 })
 
 /* ===========================
+   ADD PRODUCT REVIEW
+=========================== */
+
+app.post("/api/products/:slug/reviews", async (req,res)=>{
+
+const {name,rating,comment} = req.body
+
+const product = await Product.findOne({
+slug:req.params.slug
+})
+
+if(!product){
+return res.status(404).json({error:"Product not found"})
+}
+
+product.reviews.push({
+name,
+rating,
+comment
+})
+
+await product.save()
+
+res.json(product)
+
+})
+
+/* ===========================
+   GET PRODUCT REVIEWS
+=========================== */
+
+app.get("/api/products/:slug/reviews", async (req,res)=>{
+
+const product = await Product.findOne({
+slug:req.params.slug
+})
+
+if(!product){
+return res.status(404).json({error:"Product not found"})
+}
+
+res.json(product.reviews)
+
+})
+
+/* ===========================
    GET ORDERS
 =========================== */
 
-app.get("/api/orders",async(req,res)=>{
+app.get("/api/orders", async (req,res)=>{
 
 const page=parseInt(req.query.page)||1
 const limit=parseInt(req.query.limit)||50
@@ -233,38 +292,14 @@ total
 })
 
 /* ===========================
-   GET SINGLE ORDER
+   UPDATE ORDER STATUS
 =========================== */
 
-app.get("/api/orders/:id",async(req,res)=>{
-
-try{
-
-const order=await Order.findById(req.params.id)
-
-if(!order){
-return res.status(404).json({error:"Order not found"})
-}
-
-res.json(order)
-
-}catch(err){
-
-res.status(404).json({error:"Order not found"})
-
-}
-
-})
-
-/* ===========================
-   UPDATE STATUS
-=========================== */
-
-app.put("/api/orders/:id/status",async(req,res)=>{
+app.put("/api/orders/:id/status", async (req,res)=>{
 
 const {status}=req.body
 
-const order=await Order.findByIdAndUpdate(
+const order = await Order.findByIdAndUpdate(
 req.params.id,
 {status},
 {new:true}
@@ -278,11 +313,11 @@ res.json(order)
    UPDATE TRACKING
 =========================== */
 
-app.put("/api/orders/:id/tracking",async(req,res)=>{
+app.put("/api/orders/:id/tracking", async (req,res)=>{
 
 const {trackingNumber,carrier,status}=req.body
 
-const order=await Order.findByIdAndUpdate(
+const order = await Order.findByIdAndUpdate(
 
 req.params.id,
 
@@ -336,9 +371,9 @@ res.json(order)
    TRACK ORDER
 =========================== */
 
-app.get("/api/track/:trackingNumber",async(req,res)=>{
+app.get("/api/track/:trackingNumber", async (req,res)=>{
 
-const order=await Order.findOne({
+const order = await Order.findOne({
 trackingNumber:req.params.trackingNumber
 })
 
@@ -354,9 +389,9 @@ res.json(order)
    EXPORT CSV
 =========================== */
 
-app.get("/api/orders/export",async(req,res)=>{
+app.get("/api/orders/export", async (req,res)=>{
 
-const orders=await Order.find()
+const orders = await Order.find()
 
 let csv="Customer,Email,Total,Status,Date\n"
 
@@ -374,7 +409,7 @@ res.send(csv)
    MONTHLY REVENUE
 =========================== */
 
-app.get("/api/revenue/monthly",async(req,res)=>{
+app.get("/api/revenue/monthly", async (req,res)=>{
 
 const start=new Date()
 start.setDate(1)
@@ -396,7 +431,7 @@ thisMonth:total
    SALES CHART
 =========================== */
 
-app.get("/api/revenue/chart",async(req,res)=>{
+app.get("/api/revenue/chart", async (req,res)=>{
 
 const orders=await Order.find({status:"Paid"})
 
@@ -425,7 +460,7 @@ values:Object.values(days)
    TOP PRODUCTS
 =========================== */
 
-app.get("/api/analytics/top-products",async(req,res)=>{
+app.get("/api/analytics/top-products", async (req,res)=>{
 
 const orders=await Order.find({status:"Paid"})
 
@@ -456,7 +491,7 @@ values:Object.values(sales)
    PAYSTACK INITIALIZE
 =========================== */
 
-app.post("/initialize-payment",async(req,res)=>{
+app.post("/initialize-payment", async (req,res)=>{
 
 const {email,amount}=req.body
 
@@ -496,7 +531,7 @@ error:"Payment initialization failed"
    VERIFY PAYMENT
 =========================== */
 
-app.post("/verify-payment",async(req,res)=>{
+app.post("/verify-payment", async (req,res)=>{
 
 const {reference,orderData}=req.body
 
