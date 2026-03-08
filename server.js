@@ -10,13 +10,8 @@ const multer = require("multer")
 const { CloudinaryStorage } = require("multer-storage-cloudinary")
 const cloudinary = require("cloudinary").v2
 
-cloudinary.config({
-  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
-  api_key: process.env.CLOUDINARY_API_KEY,
-  api_secret: process.env.CLOUDINARY_API_SECRET
-})
 const http = require("http")
-const {Server} = require("socket.io")
+const { Server } = require("socket.io")
 
 const app = express()
 const PORT = process.env.PORT || 10000
@@ -42,7 +37,30 @@ mongoose.connect(process.env.MONGO_URI)
 .catch(err=>console.error("MongoDB Error:",err))
 
 /* ===========================
-   EMAIL TRANSPORT
+   CLOUDINARY
+=========================== */
+
+cloudinary.config({
+cloud_name:process.env.CLOUDINARY_CLOUD_NAME,
+api_key:process.env.CLOUDINARY_API_KEY,
+api_secret:process.env.CLOUDINARY_API_SECRET
+})
+
+const storage = new CloudinaryStorage({
+
+cloudinary,
+
+params:{
+folder:"techmart_products",
+allowed_formats:["jpg","png","jpeg"]
+}
+
+})
+
+const upload = multer({storage})
+
+/* ===========================
+   EMAIL
 =========================== */
 
 const transporter = nodemailer.createTransport({
@@ -100,9 +118,11 @@ const Order = mongoose.model("Order",orderSchema)
 const productSchema = new mongoose.Schema({
 
 name:String,
+slug:String,
 price:Number,
 description:String,
 stock:Number,
+image:String,
 
 createdAt:{
 type:Date,
@@ -114,33 +134,70 @@ default:Date.now
 const Product = mongoose.model("Product",productSchema)
 
 /* ===========================
-   PRODUCTS API
+   GET PRODUCTS
 =========================== */
 
 app.get("/api/products",async(req,res)=>{
 
-const products = await Product.find()
+const products=await Product.find()
 
 res.json(products)
 
 })
 
-app.post("/api/products",async(req,res)=>{
+/* ===========================
+   GET PRODUCT BY SLUG
+=========================== */
 
-const {name,price,description,stock} = req.body
+app.get("/api/products/:slug",async(req,res)=>{
 
-const product = new Product({
-name,
-price,
-description,
-stock
+const product=await Product.findOne({
+slug:req.params.slug
 })
 
-const saved = await product.save()
+if(!product){
+return res.status(404).json({error:"Product not found"})
+}
+
+res.json(product)
+
+})
+
+/* ===========================
+   ADD PRODUCT
+=========================== */
+
+app.post("/api/products",upload.single("image"),async(req,res)=>{
+
+const {name,price,description,stock}=req.body
+
+const slug=name
+.toLowerCase()
+.replace(/[^a-z0-9]+/g,"-")
+.replace(/(^-|-$)/g,"")
+
+const image=req.file?req.file.path:""
+
+const product=new Product({
+
+name,
+slug,
+price,
+description,
+stock,
+image
+
+})
+
+const saved=await product.save()
 
 res.json(saved)
 
 })
+
+/* ===========================
+   DELETE PRODUCT
+=========================== */
 
 app.delete("/api/products/:id",async(req,res)=>{
 
@@ -200,7 +257,7 @@ res.status(404).json({error:"Order not found"})
 })
 
 /* ===========================
-   UPDATE ORDER STATUS
+   UPDATE STATUS
 =========================== */
 
 app.put("/api/orders/:id/status",async(req,res)=>{
@@ -239,8 +296,6 @@ status
 
 )
 
-/* SEND EMAIL WHEN SHIPPED */
-
 if(status==="Shipped" && trackingNumber){
 
 const trackingLink=`https://yourstore.netlify.app/track.html?tracking=${trackingNumber}`
@@ -248,7 +303,6 @@ const trackingLink=`https://yourstore.netlify.app/track.html?tracking=${tracking
 await transporter.sendMail({
 
 from:`TechMart <${process.env.EMAIL_USER}>`,
-
 to:order.email,
 
 subject:"Your TechMart Order Has Shipped 🚚",
@@ -258,7 +312,6 @@ html:`
 <h2>Your order has shipped!</h2>
 
 <p><b>Carrier:</b> ${carrier}</p>
-
 <p><b>Tracking Number:</b> ${trackingNumber}</p>
 
 <p>
@@ -268,8 +321,6 @@ Track your order here:
 ${trackingLink}
 </a>
 </p>
-
-<p>Thank you for shopping with TechMart.</p>
 
 `
 
