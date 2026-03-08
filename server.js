@@ -6,6 +6,9 @@ const mongoose = require("mongoose")
 const axios = require("axios")
 const nodemailer = require("nodemailer")
 
+const bcrypt = require("bcryptjs")
+const jwt = require("jsonwebtoken")
+
 const multer = require("multer")
 const { CloudinaryStorage } = require("multer-storage-cloudinary")
 const cloudinary = require("cloudinary").v2
@@ -70,6 +73,30 @@ user:process.env.EMAIL_USER,
 pass:process.env.EMAIL_PASS
 }
 })
+
+/* ===========================
+   USER SCHEMA
+=========================== */
+
+const userSchema = new mongoose.Schema({
+
+name:String,
+
+email:{
+type:String,
+unique:true
+},
+
+password:String,
+
+createdAt:{
+type:Date,
+default:Date.now
+}
+
+})
+
+const User = mongoose.model("User",userSchema)
 
 /* ===========================
    ORDER SCHEMA
@@ -145,6 +172,77 @@ default:Date.now
 })
 
 const Product = mongoose.model("Product",productSchema)
+
+/* ===========================
+   REGISTER USER
+=========================== */
+
+app.post("/api/users/register", async (req,res)=>{
+
+const {name,email,password} = req.body
+
+const existing = await User.findOne({email})
+
+if(existing){
+return res.status(400).json({error:"User already exists"})
+}
+
+const hashedPassword = await bcrypt.hash(password,10)
+
+const user = new User({
+
+name,
+email,
+password:hashedPassword
+
+})
+
+await user.save()
+
+res.json({message:"Account created"})
+
+})
+
+/* ===========================
+   LOGIN USER
+=========================== */
+
+app.post("/api/users/login", async (req,res)=>{
+
+const {email,password} = req.body
+
+const user = await User.findOne({email})
+
+if(!user){
+return res.status(400).json({error:"Invalid email"})
+}
+
+const valid = await bcrypt.compare(password,user.password)
+
+if(!valid){
+return res.status(400).json({error:"Invalid password"})
+}
+
+const token = jwt.sign({
+
+id:user._id
+
+}, process.env.JWT_SECRET , {
+
+expiresIn:"7d"
+
+})
+
+res.json({
+token,
+user:{
+id:user._id,
+name:user.name,
+email:user.email
+}
+})
+
+})
 
 /* ===========================
    GET PRODUCTS
@@ -382,210 +480,6 @@ return res.status(404).json({error:"Tracking not found"})
 }
 
 res.json(order)
-
-})
-
-/* ===========================
-   EXPORT CSV
-=========================== */
-
-app.get("/api/orders/export", async (req,res)=>{
-
-const orders = await Order.find()
-
-let csv="Customer,Email,Total,Status,Date\n"
-
-orders.forEach(o=>{
-csv+=`${o.customerName},${o.email},${o.totalAmount},${o.status},${o.createdAt}\n`
-})
-
-res.header("Content-Type","text/csv")
-res.attachment("orders.csv")
-res.send(csv)
-
-})
-
-/* ===========================
-   MONTHLY REVENUE
-=========================== */
-
-app.get("/api/revenue/monthly", async (req,res)=>{
-
-const start=new Date()
-start.setDate(1)
-
-const orders=await Order.find({
-createdAt:{$gte:start},
-status:"Paid"
-})
-
-const total=orders.reduce((sum,o)=>sum+o.totalAmount,0)
-
-res.json({
-thisMonth:total
-})
-
-})
-
-/* ===========================
-   SALES CHART
-=========================== */
-
-app.get("/api/revenue/chart", async (req,res)=>{
-
-const orders=await Order.find({status:"Paid"})
-
-const days={}
-
-orders.forEach(order=>{
-
-const date=new Date(order.createdAt).toLocaleDateString()
-
-if(!days[date]){
-days[date]=0
-}
-
-days[date]+=order.totalAmount
-
-})
-
-res.json({
-labels:Object.keys(days),
-values:Object.values(days)
-})
-
-})
-
-/* ===========================
-   TOP PRODUCTS
-=========================== */
-
-app.get("/api/analytics/top-products", async (req,res)=>{
-
-const orders=await Order.find({status:"Paid"})
-
-const sales={}
-
-orders.forEach(order=>{
-
-order.items.forEach(item=>{
-
-if(!sales[item.name]){
-sales[item.name]=0
-}
-
-sales[item.name]+=item.quantity
-
-})
-
-})
-
-res.json({
-labels:Object.keys(sales),
-values:Object.values(sales)
-})
-
-})
-
-/* ===========================
-   PAYSTACK INITIALIZE
-=========================== */
-
-app.post("/initialize-payment", async (req,res)=>{
-
-const {email,amount}=req.body
-
-try{
-
-const response=await axios.post(
-
-"https://api.paystack.co/transaction/initialize",
-
-{
-email,
-amount:Math.round(amount*100)
-},
-
-{
-headers:{
-Authorization:`Bearer ${process.env.PAYSTACK_SECRET_KEY}`,
-"Content-Type":"application/json"
-}
-}
-
-)
-
-res.json(response.data)
-
-}catch(error){
-
-res.status(500).json({
-error:"Payment initialization failed"
-})
-
-}
-
-})
-
-/* ===========================
-   VERIFY PAYMENT
-=========================== */
-
-app.post("/verify-payment", async (req,res)=>{
-
-const {reference,orderData}=req.body
-
-try{
-
-const response=await axios.get(
-
-`https://api.paystack.co/transaction/verify/${reference}`,
-
-{
-headers:{
-Authorization:`Bearer ${process.env.PAYSTACK_SECRET_KEY}`
-}
-}
-
-)
-
-const paymentData=response.data.data
-
-if(paymentData.status==="success"){
-
-const newOrder=new Order({
-
-customerName:orderData.customerName,
-email:orderData.email,
-address:orderData.address,
-items:orderData.items,
-totalAmount:orderData.totalAmount,
-paymentReference:reference,
-status:"Paid"
-
-})
-
-const savedOrder=await newOrder.save()
-
-io.emit("new-order",savedOrder)
-
-return res.json({
-success:true,
-orderId:savedOrder._id
-})
-
-}
-
-return res.json({success:false})
-
-}catch(error){
-
-return res.status(500).json({
-success:false,
-error:"Verification failed"
-})
-
-}
 
 })
 
