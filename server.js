@@ -89,6 +89,9 @@ unique:true
 
 password:String,
 
+resetToken:String,
+resetTokenExpiry:Date,
+
 createdAt:{
 type:Date,
 default:Date.now
@@ -241,6 +244,86 @@ name:user.name,
 email:user.email
 }
 })
+
+})
+
+/* ===========================
+   FORGOT PASSWORD
+=========================== */
+
+app.post("/api/users/forgot-password", async (req,res)=>{
+
+const {email} = req.body
+
+const user = await User.findOne({email})
+
+if(!user){
+return res.status(404).json({error:"User not found"})
+}
+
+const token = Math.random().toString(36).substring(2)
+
+user.resetToken = token
+user.resetTokenExpiry = Date.now() + 3600000
+
+await user.save()
+
+const resetLink =
+`https://yourstore.netlify.app/reset-password.html?token=${token}`
+
+await transporter.sendMail({
+
+to:user.email,
+
+subject:"TechMart Password Reset",
+
+html:`
+
+<h2>Password Reset</h2>
+
+<p>Click the link below to reset your password</p>
+
+<a href="${resetLink}">
+Reset Password
+</a>
+
+`
+
+})
+
+res.json({message:"Reset email sent"})
+
+})
+
+/* ===========================
+   RESET PASSWORD
+=========================== */
+
+app.post("/api/users/reset-password", async (req,res)=>{
+
+const {token,password} = req.body
+
+const user = await User.findOne({
+
+resetToken:token,
+resetTokenExpiry:{$gt:Date.now()}
+
+})
+
+if(!user){
+return res.status(400).json({error:"Invalid or expired token"})
+}
+
+const hashed = await bcrypt.hash(password,10)
+
+user.password = hashed
+
+user.resetToken = undefined
+user.resetTokenExpiry = undefined
+
+await user.save()
+
+res.json({message:"Password updated"})
 
 })
 
@@ -402,64 +485,6 @@ req.params.id,
 {status},
 {new:true}
 )
-
-res.json(order)
-
-})
-
-/* ===========================
-   UPDATE TRACKING
-=========================== */
-
-app.put("/api/orders/:id/tracking", async (req,res)=>{
-
-const {trackingNumber,carrier,status}=req.body
-
-const order = await Order.findByIdAndUpdate(
-
-req.params.id,
-
-{
-trackingNumber,
-carrier,
-status
-},
-
-{new:true}
-
-)
-
-if(status==="Shipped" && trackingNumber){
-
-const trackingLink=`https://yourstore.netlify.app/track.html?tracking=${trackingNumber}`
-
-await transporter.sendMail({
-
-from:`TechMart <${process.env.EMAIL_USER}>`,
-to:order.email,
-
-subject:"Your TechMart Order Has Shipped 🚚",
-
-html:`
-
-<h2>Your order has shipped!</h2>
-
-<p><b>Carrier:</b> ${carrier}</p>
-<p><b>Tracking Number:</b> ${trackingNumber}</p>
-
-<p>
-Track your order here:
-<br><br>
-<a href="${trackingLink}">
-${trackingLink}
-</a>
-</p>
-
-`
-
-})
-
-}
 
 res.json(order)
 
