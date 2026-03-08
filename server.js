@@ -1,28 +1,28 @@
-require("dotenv").config();
+require("dotenv").config()
 
-const express = require("express");
-const cors = require("cors");
-const mongoose = require("mongoose");
-const axios = require("axios");
-const nodemailer = require("nodemailer");
+const express = require("express")
+const cors = require("cors")
+const mongoose = require("mongoose")
+const axios = require("axios")
+const nodemailer = require("nodemailer")
 
-const http = require("http");
-const { Server } = require("socket.io");
+const http = require("http")
+const {Server} = require("socket.io")
 
-const app = express();
-const PORT = process.env.PORT || 10000;
+const app = express()
+const PORT = process.env.PORT || 10000
 
 /* ===========================
    CORS
 =========================== */
 
 app.use(cors({
-  origin: "*",
-  methods: ["GET","POST","PUT","DELETE","OPTIONS"],
-  allowedHeaders: ["Content-Type","Authorization"]
-}));
+origin:"*",
+methods:["GET","POST","PUT","DELETE","OPTIONS"],
+allowedHeaders:["Content-Type","Authorization"]
+}))
 
-app.use(express.json());
+app.use(express.json())
 
 /* ===========================
    MONGODB
@@ -30,14 +30,20 @@ app.use(express.json());
 
 mongoose.connect(process.env.MONGO_URI)
 .then(()=>console.log("✅ MongoDB Connected"))
-.catch(err=>console.error("❌ MongoDB Error:",err));
+.catch(err=>console.error("MongoDB Error:",err))
+
+/* ===========================
+   EMAIL TRANSPORT
+=========================== */
+
 const transporter = nodemailer.createTransport({
-   service:"gmail",
-   auth:{
-   user:process.env.EMAIL_USER,
-   pass:process.env.EMAIL_PASS
-   }
-   });
+service:"gmail",
+auth:{
+user:process.env.EMAIL_USER,
+pass:process.env.EMAIL_PASS
+}
+})
+
 /* ===========================
    ORDER SCHEMA
 =========================== */
@@ -74,68 +80,69 @@ type:Date,
 default:Date.now
 }
 
-});
+})
 
-const Order = mongoose.model("Order",orderSchema);
+const Order = mongoose.model("Order",orderSchema)
 
 /* ===========================
-   PRODUCTS
+   PRODUCT SCHEMA
 =========================== */
 
-const products = [
+const productSchema = new mongoose.Schema({
 
-{
-id:1,
-name:"Wireless Headphones",
-price:99.99,
-description:"Noise-cancelling over-ear headphones with Bluetooth.",
-stock:25
-},
+name:String,
+price:Number,
+description:String,
+stock:Number,
 
-{
-id:2,
-name:"Smart Watch",
-price:149.99,
-description:"Fitness tracking and notifications on your wrist.",
-stock:20
-},
-
-{
-id:3,
-name:"Mechanical Keyboard",
-price:79.99,
-description:"RGB backlit keyboard with tactile switches.",
-stock:15
-},
-
-{
-id:4,
-name:"4K Monitor",
-price:299.99,
-description:"27-inch UHD display with HDR support.",
-stock:10
-},
-
-{
-id:5,
-name:"Gaming Mouse",
-price:49.99,
-description:"High DPI precision with customizable buttons.",
-stock:30
+createdAt:{
+type:Date,
+default:Date.now
 }
 
-];
+})
+
+const Product = mongoose.model("Product",productSchema)
 
 /* ===========================
    PRODUCTS API
 =========================== */
 
-app.get("/api/products",(req,res)=>{
+app.get("/api/products",async(req,res)=>{
+
+const products = await Product.find()
+
 res.json(products)
-});
+
+})
+
+app.post("/api/products",async(req,res)=>{
+
+const {name,price,description,stock} = req.body
+
+const product = new Product({
+name,
+price,
+description,
+stock
+})
+
+const saved = await product.save()
+
+res.json(saved)
+
+})
+
+app.delete("/api/products/:id",async(req,res)=>{
+
+await Product.findByIdAndDelete(req.params.id)
+
+res.json({success:true})
+
+})
 
 /* ===========================
-   GET ALL ORDERS
+   GET ORDERS
 =========================== */
 
 app.get("/api/orders",async(req,res)=>{
@@ -176,7 +183,9 @@ return res.status(404).json({error:"Order not found"})
 res.json(order)
 
 }catch(err){
+
 res.status(404).json({error:"Order not found"})
+
 }
 
 })
@@ -220,6 +229,44 @@ status
 {new:true}
 
 )
+
+/* SEND EMAIL WHEN SHIPPED */
+
+if(status==="Shipped" && trackingNumber){
+
+const trackingLink=`https://yourstore.netlify.app/track.html?tracking=${trackingNumber}`
+
+await transporter.sendMail({
+
+from:`TechMart <${process.env.EMAIL_USER}>`,
+
+to:order.email,
+
+subject:"Your TechMart Order Has Shipped 🚚",
+
+html:`
+
+<h2>Your order has shipped!</h2>
+
+<p><b>Carrier:</b> ${carrier}</p>
+
+<p><b>Tracking Number:</b> ${trackingNumber}</p>
+
+<p>
+Track your order here:
+<br><br>
+<a href="${trackingLink}">
+${trackingLink}
+</a>
+</p>
+
+<p>Thank you for shopping with TechMart.</p>
+
+`
+
+})
+
+}
 
 res.json(order)
 
@@ -308,16 +355,14 @@ days[date]+=order.totalAmount
 })
 
 res.json({
-
 labels:Object.keys(days),
 values:Object.values(days)
-
 })
 
 })
 
 /* ===========================
-   TOP SELLING PRODUCTS
+   TOP PRODUCTS
 =========================== */
 
 app.get("/api/analytics/top-products",async(req,res)=>{
@@ -341,10 +386,8 @@ sales[item.name]+=item.quantity
 })
 
 res.json({
-
 labels:Object.keys(sales),
 values:Object.values(sales)
-
 })
 
 })
@@ -381,8 +424,6 @@ res.json(response.data)
 
 }catch(error){
 
-console.error("Paystack Init Error:",error.response?.data||error.message)
-
 res.status(500).json({
 error:"Payment initialization failed"
 })
@@ -415,8 +456,6 @@ Authorization:`Bearer ${process.env.PAYSTACK_SECRET_KEY}`
 
 const paymentData=response.data.data
 
-console.log("Paystack verification:",paymentData)
-
 if(paymentData.status==="success"){
 
 const newOrder=new Order({
@@ -436,10 +475,8 @@ const savedOrder=await newOrder.save()
 io.emit("new-order",savedOrder)
 
 return res.json({
-
 success:true,
 orderId:savedOrder._id
-
 })
 
 }
@@ -448,13 +485,9 @@ return res.json({success:false})
 
 }catch(error){
 
-console.error("Verification Error:",error.response?.data||error.message)
-
 return res.status(500).json({
-
 success:false,
 error:"Verification failed"
-
 })
 
 }
