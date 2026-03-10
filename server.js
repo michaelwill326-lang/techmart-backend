@@ -7,6 +7,8 @@ const axios = require("axios")
 const multer = require("multer")
 const { CloudinaryStorage } = require("multer-storage-cloudinary")
 const cloudinary = require("cloudinary").v2
+const bcrypt = require("bcryptjs")
+const jwt = require("jsonwebtoken")
 
 const http = require("http")
 const { Server } = require("socket.io")
@@ -53,6 +55,30 @@ allowed_formats:["jpg","png","jpeg"]
 })
 
 const upload = multer({storage})
+
+/* ===========================
+   USER SCHEMA
+=========================== */
+
+const userSchema = new mongoose.Schema({
+
+name:String,
+
+email:{
+type:String,
+unique:true
+},
+
+password:String,
+
+createdAt:{
+type:Date,
+default:Date.now
+}
+
+})
+
+const User = mongoose.model("User",userSchema)
 
 /* ===========================
    PRODUCT SCHEMA
@@ -128,6 +154,95 @@ default:Date.now
 })
 
 const Order = mongoose.model("Order",orderSchema)
+
+/* ===========================
+   REGISTER USER
+=========================== */
+
+app.post("/api/users/register", async(req,res)=>{
+
+try{
+
+const {name,email,password} = req.body
+
+if(!name || !email || !password){
+return res.status(400).json({error:"All fields required"})
+}
+
+const existingUser = await User.findOne({email})
+
+if(existingUser){
+return res.status(400).json({error:"User already exists"})
+}
+
+const hashedPassword = await bcrypt.hash(password,10)
+
+const newUser = new User({
+name,
+email,
+password:hashedPassword
+})
+
+await newUser.save()
+
+res.json({
+message:"Account created successfully"
+})
+
+}catch(err){
+
+console.error(err)
+res.status(500).json({error:"Server error"})
+
+}
+
+})
+
+/* ===========================
+   LOGIN USER
+=========================== */
+
+app.post("/api/users/login", async(req,res)=>{
+
+try{
+
+const {email,password} = req.body
+
+const user = await User.findOne({email})
+
+if(!user){
+return res.status(400).json({error:"Invalid email"})
+}
+
+const validPassword = await bcrypt.compare(password,user.password)
+
+if(!validPassword){
+return res.status(400).json({error:"Invalid password"})
+}
+
+const token = jwt.sign(
+{ id:user._id },
+process.env.JWT_SECRET || "techmartsecret",
+{ expiresIn:"7d" }
+)
+
+res.json({
+token,
+user:{
+id:user._id,
+name:user.name,
+email:user.email
+}
+})
+
+}catch(err){
+
+console.error(err)
+res.status(500).json({error:"Server error"})
+
+}
+
+})
 
 /* ===========================
    GET PRODUCTS
@@ -230,38 +345,12 @@ res.json(product)
 })
 
 /* ===========================
-   GET REVIEWS
-=========================== */
-
-app.get("/api/products/:slug/reviews", async(req,res)=>{
-
-const product = await Product.findOne({
-slug:req.params.slug
-})
-
-if(!product){
-return res.status(404).json({error:"Product not found"})
-}
-
-res.json(product.reviews)
-
-})
-
-/* ===========================
    PRODUCT RECOMMENDATIONS
 =========================== */
 
 app.get("/api/products/:slug/recommendations", async(req,res)=>{
 
 try{
-
-const product = await Product.findOne({
-slug:req.params.slug
-})
-
-if(!product){
-return res.status(404).json({error:"Product not found"})
-}
 
 const recommendations = await Product.find({
 slug:{ $ne:req.params.slug }
@@ -270,8 +359,6 @@ slug:{ $ne:req.params.slug }
 res.json(recommendations)
 
 }catch(err){
-
-console.error(err)
 
 res.status(500).json({error:"Server error"})
 
@@ -311,7 +398,7 @@ res.json(response.data)
 
 }catch(err){
 
-console.error("Paystack Init Error:",err.response?.data||err.message)
+console.error(err.response?.data||err.message)
 
 res.status(500).json({
 error:"Payment initialization failed"
@@ -374,7 +461,7 @@ return res.json({success:false})
 
 }catch(err){
 
-console.error("Verification Error:",err.response?.data||err.message)
+console.error(err)
 
 res.status(500).json({
 success:false
@@ -390,8 +477,7 @@ success:false
 
 app.get("/api/orders", async(req,res)=>{
 
-const orders = await Order.find()
-.sort({createdAt:-1})
+const orders = await Order.find().sort({createdAt:-1})
 
 res.json(orders)
 
