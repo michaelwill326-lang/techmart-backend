@@ -17,6 +17,12 @@ const app = express()
 const PORT = process.env.PORT || 10000
 
 /* ===========================
+   FRONTEND URL
+=========================== */
+
+const FRONTEND_URL = "https://techmart-jb9k.onrender.com"
+
+/* ===========================
    CORS
 =========================== */
 
@@ -185,9 +191,7 @@ password:hashedPassword
 
 await newUser.save()
 
-res.json({
-message:"Account created successfully"
-})
+res.json({message:"Account created successfully"})
 
 }catch(err){
 
@@ -262,9 +266,7 @@ res.json(products)
 
 app.get("/api/products/:slug", async(req,res)=>{
 
-const product = await Product.findOne({
-slug:req.params.slug
-})
+const product = await Product.findOne({slug:req.params.slug})
 
 if(!product){
 return res.status(404).json({error:"Product not found"})
@@ -324,19 +326,13 @@ app.post("/api/products/:slug/reviews", async(req,res)=>{
 
 const {name,rating,comment} = req.body
 
-const product = await Product.findOne({
-slug:req.params.slug
-})
+const product = await Product.findOne({slug:req.params.slug})
 
 if(!product){
 return res.status(404).json({error:"Product not found"})
 }
 
-product.reviews.push({
-name,
-rating,
-comment
-})
+product.reviews.push({name,rating,comment})
 
 await product.save()
 
@@ -400,9 +396,7 @@ res.json(response.data)
 
 console.error(err.response?.data||err.message)
 
-res.status(500).json({
-error:"Payment initialization failed"
-})
+res.status(500).json({error:"Payment initialization failed"})
 
 }
 
@@ -430,21 +424,9 @@ Authorization:`Bearer ${process.env.PAYSTACK_SECRET_KEY}`
 
 )
 
-const paymentData = response.data.data
+if(response.data.data.status==="success"){
 
-if(paymentData.status==="success"){
-
-const newOrder = new Order({
-
-customerName:orderData.customerName,
-email:orderData.email,
-address:orderData.address,
-items:orderData.items,
-totalAmount:orderData.totalAmount,
-paymentReference:reference,
-status:"Paid"
-
-})
+const newOrder = new Order(orderData)
 
 const savedOrder = await newOrder.save()
 
@@ -462,17 +444,14 @@ return res.json({success:false})
 }catch(err){
 
 console.error(err)
-
-res.status(500).json({
-success:false
-})
+res.status(500).json({success:false})
 
 }
 
 })
 
 /* ===========================
-   GET ALL ORDERS
+   GET ORDERS
 =========================== */
 
 app.get("/api/orders", async(req,res)=>{
@@ -480,30 +459,6 @@ app.get("/api/orders", async(req,res)=>{
 const orders = await Order.find().sort({createdAt:-1})
 
 res.json(orders)
-
-})
-
-/* ===========================
-   GET SINGLE ORDER
-=========================== */
-
-app.get("/api/orders/:id", async(req,res)=>{
-
-try{
-
-const order = await Order.findById(req.params.id)
-
-if(!order){
-return res.status(404).json({error:"Order not found"})
-}
-
-res.json(order)
-
-}catch(err){
-
-res.status(500).json({error:"Server error"})
-
-}
 
 })
 
@@ -524,6 +479,56 @@ return res.status(404).json({error:"Tracking not found"})
 res.json(order)
 
 })
+
+/* ===========================
+   SEO SITEMAP
+=========================== */
+
+app.get("/sitemap.xml", async (req,res)=>{
+
+   try{
+   
+   const products = await Product.find()
+   
+   let urls = ""
+   
+   products.forEach(p=>{
+   
+   urls += `
+   <url>
+   <loc>https://techmart.onrender.com/product.html?slug=${p.slug}</loc>
+   <changefreq>weekly</changefreq>
+   <priority>0.9</priority>
+   </url>
+   `
+   
+   })
+   
+   const sitemap = `<?xml version="1.0" encoding="UTF-8"?>
+   
+   <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+   
+   <url>
+   <loc>https://techmart.onrender.com</loc>
+   <changefreq>daily</changefreq>
+   <priority>1.0</priority>
+   </url>
+   
+   ${urls}
+   
+   </urlset>`
+   
+   res.header("Content-Type","application/xml")
+   res.send(sitemap)
+   
+   }catch(err){
+   
+   console.error(err)
+   res.status(500).send("Error generating sitemap")
+   
+   }
+   
+   })
 
 /* ===========================
    SOCKET.IO
