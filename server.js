@@ -23,7 +23,7 @@ const PORT = process.env.PORT || 10000
 const FRONTEND_URL = "https://techmart-jb9k.onrender.com"
 
 /* ===========================
-   CORS
+   MIDDLEWARE
 =========================== */
 
 app.use(cors({
@@ -63,31 +63,20 @@ allowed_formats:["jpg","png","jpeg"]
 const upload = multer({storage})
 
 /* ===========================
-   USER SCHEMA
+   USER MODEL
 =========================== */
 
 const userSchema = new mongoose.Schema({
-
 name:String,
-
-email:{
-type:String,
-unique:true
-},
-
+email:{ type:String, unique:true },
 password:String,
-
-createdAt:{
-type:Date,
-default:Date.now
-}
-
+createdAt:{ type:Date, default:Date.now }
 })
 
 const User = mongoose.model("User",userSchema)
 
 /* ===========================
-   PRODUCT SCHEMA
+   PRODUCT MODEL
 =========================== */
 
 const productSchema = new mongoose.Schema({
@@ -100,29 +89,20 @@ stock:Number,
 image:String,
 
 reviews:[{
-
 name:String,
 rating:Number,
 comment:String,
-
-createdAt:{
-type:Date,
-default:Date.now
-}
-
+createdAt:{ type:Date, default:Date.now }
 }],
 
-createdAt:{
-type:Date,
-default:Date.now
-}
+createdAt:{ type:Date, default:Date.now }
 
 })
 
 const Product = mongoose.model("Product",productSchema)
 
 /* ===========================
-   ORDER SCHEMA
+   ORDER MODEL
 =========================== */
 
 const orderSchema = new mongoose.Schema({
@@ -130,11 +110,8 @@ const orderSchema = new mongoose.Schema({
 customerName:String,
 email:String,
 address:String,
-
 items:Array,
-
 totalAmount:Number,
-
 paymentReference:String,
 
 status:{
@@ -142,20 +119,10 @@ type:String,
 default:"Processing"
 },
 
-trackingNumber:{
-type:String,
-default:""
-},
+trackingNumber:String,
+carrier:String,
 
-carrier:{
-type:String,
-default:""
-},
-
-createdAt:{
-type:Date,
-default:Date.now
-}
+createdAt:{ type:Date, default:Date.now }
 
 })
 
@@ -175,21 +142,21 @@ if(!name || !email || !password){
 return res.status(400).json({error:"All fields required"})
 }
 
-const existingUser = await User.findOne({email})
+const existing = await User.findOne({email})
 
-if(existingUser){
+if(existing){
 return res.status(400).json({error:"User already exists"})
 }
 
 const hashedPassword = await bcrypt.hash(password,10)
 
-const newUser = new User({
+const user = new User({
 name,
 email,
 password:hashedPassword
 })
 
-await newUser.save()
+await user.save()
 
 res.json({message:"Account created successfully"})
 
@@ -253,11 +220,8 @@ res.status(500).json({error:"Server error"})
 =========================== */
 
 app.get("/api/products", async(req,res)=>{
-
 const products = await Product.find()
-
 res.json(products)
-
 })
 
 /* ===========================
@@ -311,11 +275,8 @@ res.json(saved)
 =========================== */
 
 app.delete("/api/products/:id", async(req,res)=>{
-
 await Product.findByIdAndDelete(req.params.id)
-
 res.json({success:true})
-
 })
 
 /* ===========================
@@ -333,7 +294,6 @@ return res.status(404).json({error:"Product not found"})
 }
 
 product.reviews.push({name,rating,comment})
-
 await product.save()
 
 res.json(product)
@@ -373,21 +333,17 @@ const {email,amount} = req.body
 try{
 
 const response = await axios.post(
-
 "https://api.paystack.co/transaction/initialize",
-
 {
 email,
 amount:Math.round(amount*100)
 },
-
 {
 headers:{
 Authorization:`Bearer ${process.env.PAYSTACK_SECRET_KEY}`,
 "Content-Type":"application/json"
 }
 }
-
 )
 
 res.json(response.data)
@@ -395,7 +351,6 @@ res.json(response.data)
 }catch(err){
 
 console.error(err.response?.data||err.message)
-
 res.status(500).json({error:"Payment initialization failed"})
 
 }
@@ -413,21 +368,17 @@ const {reference,orderData} = req.body
 try{
 
 const response = await axios.get(
-
 `https://api.paystack.co/transaction/verify/${reference}`,
-
 {
 headers:{
 Authorization:`Bearer ${process.env.PAYSTACK_SECRET_KEY}`
 }
 }
-
 )
 
 if(response.data.data.status==="success"){
 
 const newOrder = new Order(orderData)
-
 const savedOrder = await newOrder.save()
 
 io.emit("new-order",savedOrder)
@@ -439,7 +390,7 @@ orderId:savedOrder._id
 
 }
 
-return res.json({success:false})
+res.json({success:false})
 
 }catch(err){
 
@@ -455,11 +406,8 @@ res.status(500).json({success:false})
 =========================== */
 
 app.get("/api/orders", async(req,res)=>{
-
 const orders = await Order.find().sort({createdAt:-1})
-
 res.json(orders)
-
 })
 
 /* ===========================
@@ -486,65 +434,71 @@ res.json(order)
 
 app.get("/robots.txt",(req,res)=>{
 
-   res.type("text/plain")
-   
-   res.send(`
-   User-agent: *
-   Allow: /
-   
-   Sitemap: https://techmart-backend-ecbi.onrender.com/sitemap.xml
-   `)
-   
-   })
+res.type("text/plain")
+
+res.send(`
+User-agent: *
+Allow: /
+
+Sitemap: https://techmart-backend-ecbi.onrender.com/sitemap.xml
+`)
+
+})
+
 /* ===========================
    SEO SITEMAP
 =========================== */
 
-app.get("/sitemap.xml", async (req,res)=>{
+app.get("/sitemap.xml", async(req,res)=>{
 
-   try{
-   
-   const products = await Product.find()
-   
-   let urls = ""
-   
-   products.forEach(p=>{
-   
-   urls += `
-   <url>
-   <loc>https://techmart.onrender.com/product.html?slug=${p.slug}</loc>
-   <changefreq>weekly</changefreq>
-   <priority>0.9</priority>
-   </url>
-   `
-   
-   })
-   
-   const sitemap = `<?xml version="1.0" encoding="UTF-8"?>
-   
-   <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
-   
-   <url>
-   <loc>https://techmart.onrender.com</loc>
-   <changefreq>daily</changefreq>
-   <priority>1.0</priority>
-   </url>
-   
-   ${urls}
-   
-   </urlset>`
-   
-   res.header("Content-Type","application/xml")
-   res.send(sitemap)
-   
-   }catch(err){
-   
-   console.error(err)
-   res.status(500).send("Error generating sitemap")
-   
-   }
-   
-   })
+try{
+
+const products = await Product.find()
+
+let urls = ""
+
+products.forEach(p=>{
+
+const slug = p.slug || p.name
+.toLowerCase()
+.replace(/[^a-z0-9]+/g,"-")
+.replace(/(^-|-$)/g,"")
+
+urls += `
+<url>
+<loc>${FRONTEND_URL}/product.html?slug=${slug}</loc>
+<changefreq>weekly</changefreq>
+<priority>0.9</priority>
+</url>
+`
+
+})
+
+const sitemap = `<?xml version="1.0" encoding="UTF-8"?>
+
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+
+<url>
+<loc>${FRONTEND_URL}</loc>
+<changefreq>daily</changefreq>
+<priority>1.0</priority>
+</url>
+
+${urls}
+
+</urlset>`
+
+res.header("Content-Type","application/xml")
+res.send(sitemap)
+
+}catch(err){
+
+console.error(err)
+res.status(500).send("Error generating sitemap")
+
+}
+
+})
 
 /* ===========================
    SOCKET.IO
@@ -565,7 +519,5 @@ console.log("Admin connected:",socket.id)
 =========================== */
 
 server.listen(PORT,()=>{
-
 console.log(`🚀 Server running on port ${PORT}`)
-
 })
