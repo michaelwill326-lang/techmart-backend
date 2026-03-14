@@ -481,6 +481,22 @@ res.json(order)
 })
 
 /* ===========================
+   ROBOTS.TXT
+=========================== */
+
+app.get("/robots.txt",(req,res)=>{
+
+   res.type("text/plain")
+   
+   res.send(`
+   User-agent: *
+   Allow: /
+   
+   Sitemap: https://techmart-backend-ecbi.onrender.com/sitemap.xml
+   `)
+   
+   })
+/* ===========================
    SEO SITEMAP
 =========================== */
 
