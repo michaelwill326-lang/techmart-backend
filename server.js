@@ -17,27 +17,21 @@ const app = express()
 const PORT = process.env.PORT || 10000
 
 /* ===========================
-   FRONTEND URL
+   ROOT ROUTE
 =========================== */
-
-const FRONTEND_URL = "https://techmart-jb9k.onrender.com"
+app.get("/", (req, res) => {
+  res.send("TechMart Backend Running ✅")
+})
 
 /* ===========================
    MIDDLEWARE
 =========================== */
-
-app.use(cors({
-origin:"*",
-methods:["GET","POST","PUT","DELETE"],
-allowedHeaders:["Content-Type","Authorization"]
-}))
-
+app.use(cors({ origin: "*" }))
 app.use(express.json())
 
 /* ===========================
    MONGODB
 =========================== */
-
 mongoose.connect(process.env.MONGO_URI)
 .then(()=>console.log("✅ MongoDB Connected"))
 .catch(err=>console.error(err))
@@ -45,479 +39,246 @@ mongoose.connect(process.env.MONGO_URI)
 /* ===========================
    CLOUDINARY
 =========================== */
-
 cloudinary.config({
-cloud_name:process.env.CLOUDINARY_CLOUD_NAME,
-api_key:process.env.CLOUDINARY_API_KEY,
-api_secret:process.env.CLOUDINARY_API_SECRET
+  cloud_name:process.env.CLOUDINARY_CLOUD_NAME,
+  api_key:process.env.CLOUDINARY_API_KEY,
+  api_secret:process.env.CLOUDINARY_API_SECRET
 })
 
 const storage = new CloudinaryStorage({
-cloudinary,
-params:{
-folder:"techmart_products",
-allowed_formats:["jpg","png","jpeg"]
-}
+  cloudinary,
+  params:{
+    folder:"techmart_products",
+    allowed_formats:["jpg","png","jpeg"]
+  }
 })
 
 const upload = multer({storage})
 
 /* ===========================
-   USER MODEL
+   MODELS
 =========================== */
 
+// USER
 const userSchema = new mongoose.Schema({
-name:String,
-email:{ type:String, unique:true },
-password:String,
-createdAt:{ type:Date, default:Date.now }
+  name:String,
+  email:{ type:String, unique:true },
+  password:String,
+  createdAt:{ type:Date, default:Date.now }
 })
-
 const User = mongoose.model("User",userSchema)
 
-/* ===========================
-   PRODUCT MODEL
-=========================== */
-
+// PRODUCT
 const productSchema = new mongoose.Schema({
-
-name:String,
-slug:String,
-price:Number,
-description:String,
-stock:Number,
-image:String,
-
-reviews:[{
-name:String,
-rating:Number,
-comment:String,
-createdAt:{ type:Date, default:Date.now }
-}],
-
-createdAt:{ type:Date, default:Date.now }
-
+  name:String,
+  slug:String,
+  price:Number,
+  description:String,
+  stock:Number,
+  image:String,
+  reviews:[{
+    name:String,
+    rating:Number,
+    comment:String,
+    createdAt:{ type:Date, default:Date.now }
+  }],
+  createdAt:{ type:Date, default:Date.now }
 })
-
 const Product = mongoose.model("Product",productSchema)
 
-/* ===========================
-   ORDER MODEL
-=========================== */
-
+// ORDER
 const orderSchema = new mongoose.Schema({
-
-customerName:String,
-email:String,
-address:String,
-items:Array,
-totalAmount:Number,
-paymentReference:String,
-
-status:{
-type:String,
-default:"Processing"
-},
-
-trackingNumber:String,
-carrier:String,
-
-createdAt:{ type:Date, default:Date.now }
-
+  customerName:String,
+  email:String,
+  address:String,
+  items:Array,
+  totalAmount:Number,
+  paymentReference:String,
+  status:{ type:String, default:"Processing" },
+  trackingNumber:String,
+  carrier:String,
+  createdAt:{ type:Date, default:Date.now }
 })
-
 const Order = mongoose.model("Order",orderSchema)
 
 /* ===========================
-   REGISTER USER
+   🔥 SEED PRODUCTS
 =========================== */
+app.get("/seed-products", async (req, res) => {
+  try {
 
-app.post("/api/users/register", async(req,res)=>{
+    await Product.deleteMany()
 
-try{
+    const products = [
+      {
+        name: "Gaming Laptop",
+        slug: "gaming-laptop",
+        price: 1200,
+        description: "High performance gaming laptop",
+        stock: 10,
+        image: "https://via.placeholder.com/400"
+      },
+      {
+        name: "Wireless Headphones",
+        slug: "wireless-headphones",
+        price: 150,
+        description: "Noise cancelling headphones",
+        stock: 20,
+        image: "https://via.placeholder.com/400"
+      },
+      {
+        name: "Mechanical Keyboard",
+        slug: "mechanical-keyboard",
+        price: 95,
+        description: "RGB keyboard",
+        stock: 15,
+        image: "https://via.placeholder.com/400"
+      },
+      {
+        name: "Gaming Mouse",
+        slug: "gaming-mouse",
+        price: 60,
+        description: "High precision mouse",
+        stock: 25,
+        image: "https://via.placeholder.com/400"
+      },
+      {
+        name: "4K Monitor",
+        slug: "4k-monitor",
+        price: 450,
+        description: "Ultra HD monitor",
+        stock: 8,
+        image: "https://via.placeholder.com/400"
+      }
+    ]
 
-const {name,email,password} = req.body
+    await Product.insertMany(products)
 
-if(!name || !email || !password){
-return res.status(400).json({error:"All fields required"})
-}
+    res.json({ message: "Products seeded", count: products.length })
 
-const existing = await User.findOne({email})
-
-if(existing){
-return res.status(400).json({error:"User already exists"})
-}
-
-const hashedPassword = await bcrypt.hash(password,10)
-
-const user = new User({
-name,
-email,
-password:hashedPassword
-})
-
-await user.save()
-
-res.json({message:"Account created successfully"})
-
-}catch(err){
-
-console.error(err)
-res.status(500).json({error:"Server error"})
-
-}
-
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
 })
 
 /* ===========================
-   LOGIN USER
+   AUTH
 =========================== */
+app.post("/api/users/register", async(req,res)=>{
+  const {name,email,password} = req.body
+  const hashed = await bcrypt.hash(password,10)
+  const user = new User({name,email,password:hashed})
+  await user.save()
+  res.json({message:"Registered"})
+})
 
 app.post("/api/users/login", async(req,res)=>{
-
-try{
-
-const {email,password} = req.body
-
-const user = await User.findOne({email})
-
-if(!user){
-return res.status(400).json({error:"Invalid email"})
-}
-
-const validPassword = await bcrypt.compare(password,user.password)
-
-if(!validPassword){
-return res.status(400).json({error:"Invalid password"})
-}
-
-const token = jwt.sign(
-{ id:user._id },
-process.env.JWT_SECRET || "techmartsecret",
-{ expiresIn:"7d" }
-)
-
-res.json({
-token,
-user:{
-id:user._id,
-name:user.name,
-email:user.email
-}
-})
-
-}catch(err){
-
-console.error(err)
-res.status(500).json({error:"Server error"})
-
-}
-
+  const {email,password} = req.body
+  const user = await User.findOne({email})
+  if(!user) return res.status(400).json({error:"User not found"})
+  const valid = await bcrypt.compare(password,user.password)
+  if(!valid) return res.status(400).json({error:"Wrong password"})
+  const token = jwt.sign({id:user._id},"secret",{expiresIn:"7d"})
+  res.json({token})
 })
 
 /* ===========================
-   GET PRODUCTS
+   PRODUCTS
 =========================== */
-
 app.get("/api/products", async(req,res)=>{
-const products = await Product.find()
-res.json(products)
+  const products = await Product.find()
+  res.json(products)
 })
-
-/* ===========================
-   GET PRODUCT BY SLUG
-=========================== */
 
 app.get("/api/products/:slug", async(req,res)=>{
-
-const product = await Product.findOne({slug:req.params.slug})
-
-if(!product){
-return res.status(404).json({error:"Product not found"})
-}
-
-res.json(product)
-
+  const product = await Product.findOne({slug:req.params.slug})
+  if(!product) return res.status(404).json({error:"Not found"})
+  res.json(product)
 })
-
-/* ===========================
-   ADD PRODUCT
-=========================== */
 
 app.post("/api/products", upload.single("image"), async(req,res)=>{
-
-const {name,price,description,stock} = req.body
-
-const slug = name
-.toLowerCase()
-.replace(/[^a-z0-9]+/g,"-")
-.replace(/(^-|-$)/g,"")
-
-const image = req.file ? req.file.path : ""
-
-const product = new Product({
-name,
-slug,
-price,
-description,
-stock,
-image
+  const {name,price,description,stock} = req.body
+  const slug = name.toLowerCase().replace(/[^a-z0-9]+/g,"-")
+  const image = req.file ? req.file.path : ""
+  const product = new Product({name,slug,price,description,stock,image})
+  const saved = await product.save()
+  res.json(saved)
 })
-
-const saved = await product.save()
-
-res.json(saved)
-
-})
-
-/* ===========================
-   DELETE PRODUCT
-=========================== */
 
 app.delete("/api/products/:id", async(req,res)=>{
-await Product.findByIdAndDelete(req.params.id)
-res.json({success:true})
+  await Product.findByIdAndDelete(req.params.id)
+  res.json({success:true})
 })
 
 /* ===========================
-   ADD REVIEW
+   REVIEWS
 =========================== */
-
 app.post("/api/products/:slug/reviews", async(req,res)=>{
-
-const {name,rating,comment} = req.body
-
-const product = await Product.findOne({slug:req.params.slug})
-
-if(!product){
-return res.status(404).json({error:"Product not found"})
-}
-
-product.reviews.push({name,rating,comment})
-await product.save()
-
-res.json(product)
-
+  const product = await Product.findOne({slug:req.params.slug})
+  product.reviews.push(req.body)
+  await product.save()
+  res.json(product)
 })
 
 /* ===========================
-   PRODUCT RECOMMENDATIONS
+   PAYSTACK
 =========================== */
-
-app.get("/api/products/:slug/recommendations", async(req,res)=>{
-
-try{
-
-const recommendations = await Product.find({
-slug:{ $ne:req.params.slug }
-}).limit(4)
-
-res.json(recommendations)
-
-}catch(err){
-
-res.status(500).json({error:"Server error"})
-
-}
-
-})
-
-/* ===========================
-   PAYSTACK INITIALIZE
-=========================== */
-
 app.post("/initialize-payment", async(req,res)=>{
+  const {email,amount} = req.body
 
-const {email,amount} = req.body
+  const response = await axios.post(
+    "https://api.paystack.co/transaction/initialize",
+    { email, amount:Math.round(amount*100) },
+    { headers:{ Authorization:`Bearer ${process.env.PAYSTACK_SECRET_KEY}` } }
+  )
 
-try{
-
-const response = await axios.post(
-"https://api.paystack.co/transaction/initialize",
-{
-email,
-amount:Math.round(amount*100)
-},
-{
-headers:{
-Authorization:`Bearer ${process.env.PAYSTACK_SECRET_KEY}`,
-"Content-Type":"application/json"
-}
-}
-)
-
-res.json(response.data)
-
-}catch(err){
-
-console.error(err.response?.data||err.message)
-res.status(500).json({error:"Payment initialization failed"})
-
-}
-
+  res.json(response.data)
 })
-
-/* ===========================
-   VERIFY PAYMENT
-=========================== */
 
 app.post("/verify-payment", async(req,res)=>{
+  const {reference,orderData} = req.body
 
-const {reference,orderData} = req.body
+  const response = await axios.get(
+    `https://api.paystack.co/transaction/verify/${reference}`,
+    { headers:{ Authorization:`Bearer ${process.env.PAYSTACK_SECRET_KEY}` } }
+  )
 
-try{
-
-const response = await axios.get(
-`https://api.paystack.co/transaction/verify/${reference}`,
-{
-headers:{
-Authorization:`Bearer ${process.env.PAYSTACK_SECRET_KEY}`
-}
-}
-)
-
-if(response.data.data.status==="success"){
-
-const newOrder = new Order(orderData)
-const savedOrder = await newOrder.save()
-
-io.emit("new-order",savedOrder)
-
-return res.json({
-success:true,
-orderId:savedOrder._id
-})
-
-}
-
-res.json({success:false})
-
-}catch(err){
-
-console.error(err)
-res.status(500).json({success:false})
-
-}
-
+  if(response.data.data.status==="success"){
+    const order = new Order(orderData)
+    const saved = await order.save()
+    res.json({success:true,orderId:saved._id})
+  } else {
+    res.json({success:false})
+  }
 })
 
 /* ===========================
-   GET ORDERS
+   ORDERS
 =========================== */
-
 app.get("/api/orders", async(req,res)=>{
-const orders = await Order.find().sort({createdAt:-1})
-res.json(orders)
+  const orders = await Order.find().sort({createdAt:-1})
+  res.json(orders)
 })
-
-/* ===========================
-   TRACK ORDER
-=========================== */
 
 app.get("/api/track/:trackingNumber", async(req,res)=>{
-
-const order = await Order.findOne({
-trackingNumber:req.params.trackingNumber
-})
-
-if(!order){
-return res.status(404).json({error:"Tracking not found"})
-}
-
-res.json(order)
-
+  const order = await Order.findOne({trackingNumber:req.params.trackingNumber})
+  if(!order) return res.status(404).json({error:"Not found"})
+  res.json(order)
 })
 
 /* ===========================
-   ROBOTS.TXT
+   SOCKET
 =========================== */
-
-app.get("/robots.txt",(req,res)=>{
-
-res.type("text/plain")
-
-res.send(`
-User-agent: *
-Allow: /
-
-Sitemap: https://techmart-backend-ecbi.onrender.com/sitemap.xml
-`)
-
-})
-
-/* ===========================
-   SEO SITEMAP
-=========================== */
-
-app.get("/sitemap.xml", async(req,res)=>{
-
-try{
-
-const products = await Product.find()
-
-let urls = ""
-
-products.forEach(p=>{
-
-const slug = p.slug || p.name
-.toLowerCase()
-.replace(/[^a-z0-9]+/g,"-")
-.replace(/(^-|-$)/g,"")
-
-urls += `
-<url>
-<loc>${FRONTEND_URL}/product.html?slug=${slug}</loc>
-<changefreq>weekly</changefreq>
-<priority>0.9</priority>
-</url>
-`
-
-})
-
-const sitemap = `<?xml version="1.0" encoding="UTF-8"?>
-
-<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
-
-<url>
-<loc>${FRONTEND_URL}</loc>
-<changefreq>daily</changefreq>
-<priority>1.0</priority>
-</url>
-
-${urls}
-
-</urlset>`
-
-res.header("Content-Type","application/xml")
-res.send(sitemap)
-
-}catch(err){
-
-console.error(err)
-res.status(500).send("Error generating sitemap")
-
-}
-
-})
-
-/* ===========================
-   SOCKET.IO
-=========================== */
-
 const server = http.createServer(app)
-
-const io = new Server(server,{
-cors:{origin:"*"}
-})
+const io = new Server(server,{ cors:{origin:"*"} })
 
 io.on("connection",(socket)=>{
-console.log("Admin connected:",socket.id)
+  console.log("Admin connected:",socket.id)
 })
 
 /* ===========================
    START SERVER
 =========================== */
-
 server.listen(PORT,()=>{
-console.log(`🚀 Server running on port ${PORT}`)
+  console.log(`🚀 Server running on port ${PORT}`)
 })
