@@ -24,9 +24,17 @@ app.get("/", (req, res) => {
 })
 
 /* ===========================
-   MIDDLEWARE
+   🔥 CORS FIX (VERY IMPORTANT)
 =========================== */
-app.use(cors({ origin: "*" }))
+app.use(cors({
+  origin: [
+    "https://techmart-jb9k.onrender.com",
+    "http://localhost:3000"
+  ],
+  methods: ["GET","POST","PUT","DELETE"],
+  allowedHeaders: ["Content-Type","Authorization"]
+}))
+
 app.use(express.json())
 
 /* ===========================
@@ -154,10 +162,11 @@ app.get("/seed-products", async (req, res) => {
 
     await Product.insertMany(products)
 
-    res.json({ message: "Products seeded", count: products.length })
+    res.json({ message:"Products seeded successfully", count:products.length })
 
   } catch (err) {
-    res.status(500).json({ error: err.message })
+    console.error(err)
+    res.status(500).json({ error:"Seed failed" })
   }
 })
 
@@ -226,29 +235,39 @@ app.post("/api/products/:slug/reviews", async(req,res)=>{
 app.post("/initialize-payment", async(req,res)=>{
   const {email,amount} = req.body
 
-  const response = await axios.post(
-    "https://api.paystack.co/transaction/initialize",
-    { email, amount:Math.round(amount*100) },
-    { headers:{ Authorization:`Bearer ${process.env.PAYSTACK_SECRET_KEY}` } }
-  )
-
-  res.json(response.data)
+  try{
+    const response = await axios.post(
+      "https://api.paystack.co/transaction/initialize",
+      { email, amount:Math.round(amount*100) },
+      { headers:{ Authorization:`Bearer ${process.env.PAYSTACK_SECRET_KEY}` } }
+    )
+    res.json(response.data)
+  }catch(err){
+    console.error(err.response?.data || err.message)
+    res.status(500).json({error:"Payment init failed"})
+  }
 })
 
 app.post("/verify-payment", async(req,res)=>{
   const {reference,orderData} = req.body
 
-  const response = await axios.get(
-    `https://api.paystack.co/transaction/verify/${reference}`,
-    { headers:{ Authorization:`Bearer ${process.env.PAYSTACK_SECRET_KEY}` } }
-  )
+  try{
+    const response = await axios.get(
+      `https://api.paystack.co/transaction/verify/${reference}`,
+      { headers:{ Authorization:`Bearer ${process.env.PAYSTACK_SECRET_KEY}` } }
+    )
 
-  if(response.data.data.status==="success"){
-    const order = new Order(orderData)
-    const saved = await order.save()
-    res.json({success:true,orderId:saved._id})
-  } else {
+    if(response.data.data.status==="success"){
+      const order = new Order(orderData)
+      const saved = await order.save()
+      return res.json({success:true,orderId:saved._id})
+    }
+
     res.json({success:false})
+
+  }catch(err){
+    console.error(err)
+    res.status(500).json({success:false})
   }
 })
 
@@ -267,7 +286,7 @@ app.get("/api/track/:trackingNumber", async(req,res)=>{
 })
 
 /* ===========================
-   SOCKET
+   SOCKET.IO
 =========================== */
 const server = http.createServer(app)
 const io = new Server(server,{ cors:{origin:"*"} })
