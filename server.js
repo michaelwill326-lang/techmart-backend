@@ -24,7 +24,7 @@ allowedHeaders:["Content-Type","Authorization"]
 app.use(express.json())
 
 /* ===========================
-   ROOT ROUTE (FIXES "Cannot GET /")
+   ROOT ROUTE
 =========================== */
 
 app.get("/", (req,res)=>{
@@ -42,15 +42,6 @@ mongoose.connect(process.env.MONGO_URI)
 /* ===========================
    MODELS
 =========================== */
-
-const userSchema = new mongoose.Schema({
-name:String,
-email:{ type:String, unique:true },
-password:String,
-createdAt:{ type:Date, default:Date.now }
-})
-
-const User = mongoose.model("User",userSchema)
 
 const productSchema = new mongoose.Schema({
 name:String,
@@ -114,22 +105,32 @@ const orders = await Order.find().sort({createdAt:-1})
 res.json(orders)
 })
 
-/* ✅ GET SINGLE ORDER (FIXED) */
-app.get("/api/orders/:id", async(req,res)=>{
+/* ✅ SAFE GET SINGLE ORDER */
+app.get("/api/orders/:id", async (req, res) => {
 
 try{
 
-const order = await Order.findById(req.params.id)
+const id = req.params.id
+
+// 🔥 Prevent crash
+if(!mongoose.Types.ObjectId.isValid(id)){
+return res.status(400).json({ error: "Invalid order ID" })
+}
+
+const order = await Order.findById(id)
 
 if(!order){
-return res.status(404).json({error:"Order not found"})
+return res.status(404).json({ error: "Order not found" })
 }
 
 res.json(order)
 
 }catch(err){
-console.error(err)
-res.status(500).json({error:"Server error"})
+
+console.error("GET ORDER ERROR:", err)
+
+res.status(500).json({ error: "Server error" })
+
 }
 
 })
@@ -170,7 +171,7 @@ res.status(500).json({error:"Payment initialization failed"})
 })
 
 /* ===========================
-   VERIFY PAYMENT (SAVE ORDER)
+   VERIFY PAYMENT
 =========================== */
 
 app.post("/verify-payment", async(req,res)=>{
