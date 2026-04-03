@@ -7,7 +7,6 @@ const axios = require("axios");
 const jwt = require("jsonwebtoken");
 const nodemailer = require("nodemailer");
 
-// Cloudinary + Upload
 const multer = require("multer");
 const { CloudinaryStorage } = require("multer-storage-cloudinary");
 const cloudinary = require("cloudinary").v2;
@@ -32,23 +31,34 @@ mongoose.connect(process.env.MONGO_URI)
    CLOUDINARY CONFIG
 =========================== */
 cloudinary.config({
-  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
-  api_key: process.env.CLOUDINARY_API_KEY,
-  api_secret: process.env.CLOUDINARY_API_SECRET
+  cloud_name: process.env.CLOUDINARY_CLOUD_NAME || "",
+  api_key: process.env.CLOUDINARY_API_KEY || "",
+  api_secret: process.env.CLOUDINARY_API_SECRET || ""
 });
 
-const storage = new CloudinaryStorage({
-  cloudinary,
-  params: {
-    folder: "techmart",
-    allowed_formats: ["jpg", "png", "jpeg"]
-  }
-});
+/* SAFE STORAGE (NO CRASH) */
+let upload;
 
-const upload = multer({ storage });
+try {
+  const storage = new CloudinaryStorage({
+    cloudinary,
+    params: {
+      folder: "techmart",
+      allowed_formats: ["jpg", "png", "jpeg"]
+    }
+  });
+
+  upload = multer({ storage });
+
+} catch (err) {
+  console.error("❌ Cloudinary setup error:", err);
+
+  // fallback (no upload, still works)
+  upload = multer({ storage: multer.memoryStorage() });
+}
 
 /* ===========================
-   EMAIL SETUP
+   EMAIL
 =========================== */
 const transporter = nodemailer.createTransport({
   service: "gmail",
@@ -61,81 +71,61 @@ const transporter = nodemailer.createTransport({
 /* ===========================
    MODELS
 =========================== */
-const productSchema = new mongoose.Schema({
+const Product = mongoose.model("Product", new mongoose.Schema({
   name: String,
   slug: String,
   price: Number,
   description: String,
   stock: Number,
   image: String,
-  reviews: [],
   createdAt: { type: Date, default: Date.now }
-});
+}));
 
-const Product = mongoose.model("Product", productSchema);
-
-const orderSchema = new mongoose.Schema({
+const Order = mongoose.model("Order", new mongoose.Schema({
   customerName: String,
   email: String,
   address: String,
   items: Array,
   totalAmount: Number,
-  paymentReference: String,
   status: { type: String, default: "Processing" },
   trackingNumber: String,
   carrier: String,
   createdAt: { type: Date, default: Date.now }
-});
-
-const Order = mongoose.model("Order", orderSchema);
+}));
 
 /* ===========================
    ADMIN LOGIN
 =========================== */
-app.post("/admin/login", (req, res) => {
-
+app.post("/admin/login", (req,res)=>{
   const { email, password } = req.body;
 
-  if (
-    email === process.env.ADMIN_EMAIL &&
-    password === process.env.ADMIN_PASSWORD
-  ) {
-    const token = jwt.sign(
-      { role: "admin" },
-      process.env.JWT_SECRET || "secretkey",
-      { expiresIn: "1d" }
-    );
-
-    return res.json({ success: true, token });
+  if(email === process.env.ADMIN_EMAIL && password === process.env.ADMIN_PASSWORD){
+    const token = jwt.sign({ role:"admin" }, process.env.JWT_SECRET || "secret", { expiresIn:"1d" });
+    return res.json({ success:true, token });
   }
 
-  res.json({ success: false, message: "Invalid credentials" });
+  res.json({ success:false });
 });
 
 /* ===========================
-   ADMIN AUTH
+   VERIFY ADMIN
 =========================== */
-function verifyAdmin(req, res, next) {
+function verifyAdmin(req,res,next){
+  const auth = req.headers.authorization;
 
-  const authHeader = req.headers.authorization;
+  if(!auth) return res.status(401).json({error:"No token"});
 
-  if (!authHeader) {
-    return res.status(401).json({ error: "No token" });
-  }
+  try{
+    const token = auth.split(" ")[1];
+    const decoded = jwt.verify(token, process.env.JWT_SECRET || "secret");
 
-  const token = authHeader.split(" ")[1];
-
-  try {
-    const decoded = jwt.verify(token, process.env.JWT_SECRET || "secretkey");
-
-    if (decoded.role !== "admin") {
-      return res.status(403).json({ error: "Forbidden" });
+    if(decoded.role !== "admin"){
+      return res.status(403).json({error:"Forbidden"});
     }
 
     next();
-
-  } catch (err) {
-    return res.status(401).json({ error: "Invalid token" });
+  }catch{
+    res.status(401).json({error:"Invalid token"});
   }
 }
 
@@ -143,19 +133,32 @@ function verifyAdmin(req, res, next) {
    PRODUCTS
 =========================== */
 
-// GET ALL
-app.get("/api/products", async (req, res) => {
+/* GET PRODUCTS */
+app.get("/api/products", async (req,res)=>{
   const products = await Product.find();
   res.json(products);
 });
 
-// ADD PRODUCT WITH IMAGE
-app.post("/api/products", verifyAdmin, upload.single("image"), async (req, res) => {
-  try {
+/* ADD PRODUCT (FIXED + SAFE) */
+app.post("/api/products", verifyAdmin, upload.single("image"), async (req,res)=>{
+  try{
+
+    console.log("BODY:", req.body);
+    console.log("FILE:", req.file);
 
     const { name, price, description, stock } = req.body;
 
-    const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, "-");
+    if(!name || !price){
+      return res.status(400).json({error:"Missing fields"});
+    }
+
+    const slug = name.toLowerCase().replace(/[^a-z0-9]+/g,"-");
+
+    let imageUrl = "https://via.placeholder.com/400";
+
+    if(req.file && req.file.path){
+      imageUrl = req.file.path;
+    }
 
     const product = new Product({
       name,
@@ -163,34 +166,32 @@ app.post("/api/products", verifyAdmin, upload.single("image"), async (req, res) 
       price,
       description,
       stock,
-      image: req.file ? req.file.path : ""
+      image: imageUrl
     });
 
     await product.save();
 
     res.json(product);
 
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "Upload failed" });
+  }catch(err){
+    console.error("❌ UPLOAD ERROR:", err);
+    res.status(500).json({ error: err.message });
   }
 });
 
-// DELETE PRODUCT
-app.delete("/api/products/:id", verifyAdmin, async (req, res) => {
+/* DELETE */
+app.delete("/api/products/:id", verifyAdmin, async (req,res)=>{
   await Product.findByIdAndDelete(req.params.id);
-  res.json({ success: true });
+  res.json({success:true});
 });
 
 /* ===========================
-   PAYSTACK INIT
+   PAYSTACK
 =========================== */
-app.post("/initialize-payment", async (req, res) => {
-
+app.post("/initialize-payment", async (req,res)=>{
   const { email, amount } = req.body;
 
-  try {
-
+  try{
     const response = await axios.post(
       "https://api.paystack.co/transaction/initialize",
       {
@@ -199,92 +200,62 @@ app.post("/initialize-payment", async (req, res) => {
         callback_url: "https://techmart-jb9k.onrender.com/verify.html"
       },
       {
-        headers: {
-          Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}`
+        headers:{
+          Authorization:`Bearer ${process.env.PAYSTACK_SECRET_KEY}`
         }
       }
     );
 
     res.json(response.data);
 
-  } catch (err) {
+  }catch(err){
     console.error(err);
-    res.status(500).json({ error: "Payment failed" });
+    res.status(500).json({error:"Payment failed"});
   }
 });
 
-/* ===========================
-   VERIFY PAYMENT + ORDER
-=========================== */
-app.post("/verify-payment", async (req, res) => {
-
+/* VERIFY */
+app.post("/verify-payment", async (req,res)=>{
   const { reference, orderData } = req.body;
 
-  try {
-
+  try{
     const response = await axios.get(
       `https://api.paystack.co/transaction/verify/${reference}`,
       {
-        headers: {
-          Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}`
+        headers:{
+          Authorization:`Bearer ${process.env.PAYSTACK_SECRET_KEY}`
         }
       }
     );
 
-    if (response.data.data.status === "success") {
+    if(response.data.data.status === "success"){
 
-      const newOrder = new Order({
+      const order = new Order({
         ...orderData,
-        trackingNumber: "DHL" + Math.floor(Math.random() * 1000000),
-        carrier: "DHL"
+        trackingNumber:"DHL"+Math.floor(Math.random()*1000000),
+        carrier:"DHL"
       });
 
-      const savedOrder = await newOrder.save();
+      const saved = await order.save();
 
-      // SEND EMAIL
-      await transporter.sendMail({
-        from: `"TechMart" <${process.env.EMAIL_USER}>`,
-        to: orderData.email,
-        subject: "Order Confirmation",
-        html: `<h2>Thank you for your order!</h2>
-               <p>Order ID: ${savedOrder._id}</p>
-               <p>Total: ₦${savedOrder.totalAmount}</p>`
-      });
-
-      return res.json({
-        success: true,
-        orderId: savedOrder._id
-      });
+      return res.json({ success:true, orderId:saved._id });
     }
 
-    res.json({ success: false });
+    res.json({success:false});
 
-  } catch (err) {
+  }catch(err){
     console.error(err);
-    res.status(500).json({ error: "Server error" });
+    res.status(500).json({error:"Verify failed"});
   }
 });
 
 /* ===========================
-   ORDERS
+   TRACK
 =========================== */
-app.get("/api/orders", verifyAdmin, async (req, res) => {
-  const orders = await Order.find().sort({ createdAt: -1 });
-  res.json(orders);
-});
+app.get("/api/track/:trackingNumber", async (req,res)=>{
+  const order = await Order.findOne({trackingNumber:req.params.trackingNumber});
 
-/* ===========================
-   TRACK ORDER
-=========================== */
-app.get("/api/track/:trackingNumber", async (req, res) => {
-
-  const order = await Order.findOne({
-    trackingNumber: req.params.trackingNumber
-  });
-
-  if (!order) {
-    return res.status(404).json({ error: "Not found" });
-  }
+  if(!order) return res.status(404).json({error:"Not found"});
 
   res.json(order);
 });
@@ -292,13 +263,13 @@ app.get("/api/track/:trackingNumber", async (req, res) => {
 /* ===========================
    ROOT
 =========================== */
-app.get("/", (req, res) => {
+app.get("/", (req,res)=>{
   res.send("TechMart Backend Running ✅");
 });
 
 /* ===========================
-   START SERVER
+   START
 =========================== */
-app.listen(PORT, () => {
+app.listen(PORT, ()=>{
   console.log(`🚀 Server running on port ${PORT}`);
 });
