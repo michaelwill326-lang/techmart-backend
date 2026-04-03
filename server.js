@@ -6,9 +6,8 @@ const mongoose = require("mongoose");
 const axios = require("axios");
 const jwt = require("jsonwebtoken");
 const nodemailer = require("nodemailer");
-
 const multer = require("multer");
-const { CloudinaryStorage } = require("multer-storage-cloudinary");
+const streamifier = require("streamifier");
 const cloudinary = require("cloudinary").v2;
 
 const app = express();
@@ -31,31 +30,15 @@ mongoose.connect(process.env.MONGO_URI)
    CLOUDINARY CONFIG
 =========================== */
 cloudinary.config({
-  cloud_name: process.env.CLOUDINARY_CLOUD_NAME || "",
-  api_key: process.env.CLOUDINARY_API_KEY || "",
-  api_secret: process.env.CLOUDINARY_API_SECRET || ""
+  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+  api_key: process.env.CLOUDINARY_API_KEY,
+  api_secret: process.env.CLOUDINARY_API_SECRET
 });
 
-/* SAFE STORAGE (NO CRASH) */
-let upload;
-
-try {
-  const storage = new CloudinaryStorage({
-    cloudinary,
-    params: {
-      folder: "techmart",
-      allowed_formats: ["jpg", "png", "jpeg"]
-    }
-  });
-
-  upload = multer({ storage });
-
-} catch (err) {
-  console.error("❌ Cloudinary setup error:", err);
-
-  // fallback (no upload, still works)
-  upload = multer({ storage: multer.memoryStorage() });
-}
+/* ===========================
+   MULTER (MEMORY)
+=========================== */
+const upload = multer();
 
 /* ===========================
    EMAIL
@@ -133,13 +116,13 @@ function verifyAdmin(req,res,next){
    PRODUCTS
 =========================== */
 
-/* GET PRODUCTS */
+// GET PRODUCTS
 app.get("/api/products", async (req,res)=>{
   const products = await Product.find();
   res.json(products);
 });
 
-/* ADD PRODUCT (FIXED + SAFE) */
+// ADD PRODUCT (FINAL FIX)
 app.post("/api/products", verifyAdmin, upload.single("image"), async (req,res)=>{
   try{
 
@@ -156,8 +139,23 @@ app.post("/api/products", verifyAdmin, upload.single("image"), async (req,res)=>
 
     let imageUrl = "https://via.placeholder.com/400";
 
-    if(req.file && req.file.path){
-      imageUrl = req.file.path;
+    // ✅ Upload image to Cloudinary
+    if(req.file){
+      const uploadFromBuffer = () => {
+        return new Promise((resolve, reject) => {
+          const stream = cloudinary.uploader.upload_stream(
+            { folder: "techmart" },
+            (error, result) => {
+              if (result) resolve(result);
+              else reject(error);
+            }
+          );
+          streamifier.createReadStream(req.file.buffer).pipe(stream);
+        });
+      };
+
+      const result = await uploadFromBuffer();
+      imageUrl = result.secure_url;
     }
 
     const product = new Product({
@@ -174,12 +172,12 @@ app.post("/api/products", verifyAdmin, upload.single("image"), async (req,res)=>
     res.json(product);
 
   }catch(err){
-    console.error("❌ UPLOAD ERROR:", err);
+    console.error("🔥 UPLOAD ERROR:", err);
     res.status(500).json({ error: err.message });
   }
 });
 
-/* DELETE */
+// DELETE PRODUCT
 app.delete("/api/products/:id", verifyAdmin, async (req,res)=>{
   await Product.findByIdAndDelete(req.params.id);
   res.json({success:true});
@@ -214,7 +212,9 @@ app.post("/initialize-payment", async (req,res)=>{
   }
 });
 
-/* VERIFY */
+/* ===========================
+   VERIFY PAYMENT
+=========================== */
 app.post("/verify-payment", async (req,res)=>{
   const { reference, orderData } = req.body;
 
@@ -250,7 +250,7 @@ app.post("/verify-payment", async (req,res)=>{
 });
 
 /* ===========================
-   TRACK
+   TRACK ORDER
 =========================== */
 app.get("/api/track/:trackingNumber", async (req,res)=>{
   const order = await Order.findOne({trackingNumber:req.params.trackingNumber});
@@ -268,7 +268,7 @@ app.get("/", (req,res)=>{
 });
 
 /* ===========================
-   START
+   START SERVER
 =========================== */
 app.listen(PORT, ()=>{
   console.log(`🚀 Server running on port ${PORT}`);
