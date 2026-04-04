@@ -126,20 +126,14 @@ app.get("/api/products", async (req,res)=>{
 app.post("/api/products", verifyAdmin, upload.single("image"), async (req,res)=>{
   try{
 
-    console.log("BODY:", req.body);
-    console.log("FILE:", req.file);
-
-    const { name, price, description, stock } = req.body;
-
-    if(!name || !price){
-      return res.status(400).json({error:"Missing fields"});
-    }
+    const { name, description } = req.body;
+    const price = Number(req.body.price);
+    const stock = Number(req.body.stock);
 
     const slug = name.toLowerCase().replace(/[^a-z0-9]+/g,"-");
 
     let imageUrl = "https://via.placeholder.com/400";
 
-    // ✅ Upload image to Cloudinary
     if(req.file){
       const uploadFromBuffer = () => {
         return new Promise((resolve, reject) => {
@@ -150,7 +144,9 @@ app.post("/api/products", verifyAdmin, upload.single("image"), async (req,res)=>
               else reject(error);
             }
           );
-          streamifier.createReadStream(req.file.buffer).pipe(stream);
+          require("streamifier")
+            .createReadStream(req.file.buffer)
+            .pipe(stream);
         });
       };
 
@@ -172,8 +168,8 @@ app.post("/api/products", verifyAdmin, upload.single("image"), async (req,res)=>
     res.json(product);
 
   }catch(err){
-    console.error("🔥 UPLOAD ERROR:", err);
-    res.status(500).json({ error: err.message });
+    console.error(err);
+    res.status(500).json({error: err.message});
   }
 });
 
