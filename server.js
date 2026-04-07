@@ -33,6 +33,39 @@ const userSchema = new mongoose.Schema({
 const User = mongoose.model("User", userSchema);
 
 /* ===========================
+   ORDER MODEL
+=========================== */
+const orderSchema = new mongoose.Schema({
+  userId: String,
+  totalAmount: Number,
+  status: { type: String, default: "Processing" }
+}, { timestamps:true });
+
+const Order = mongoose.model("Order", orderSchema);
+
+/* ===========================
+   AUTH MIDDLEWARE
+=========================== */
+function auth(req,res,next){
+
+  const header = req.headers.authorization;
+
+  if(!header){
+    return res.status(401).json({ error:"No token" });
+  }
+
+  const token = header.split(" ")[1];
+
+  try{
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    req.userId = decoded.id;
+    next();
+  }catch{
+    return res.status(401).json({ error:"Invalid token" });
+  }
+}
+
+/* ===========================
    REGISTER
 =========================== */
 app.post("/api/register", async (req, res) => {
@@ -40,12 +73,9 @@ app.post("/api/register", async (req, res) => {
 
     let { name, email, password } = req.body;
 
-    // ✅ FIX: Trim values
     name = name?.trim();
     email = email?.trim();
     password = password?.trim();
-
-    console.log("REGISTER BODY:", { name, email, password });
 
     if(!name || !email || !password){
       return res.status(400).json({
@@ -135,6 +165,40 @@ app.post("/api/login", async (req, res) => {
     console.error("LOGIN ERROR:", err);
     res.status(500).json({ success:false, message:"Login failed" });
   }
+});
+
+/* ===========================
+   PROFILE (PROTECTED)
+=========================== */
+app.get("/api/profile", auth, async (req,res)=>{
+  const user = await User.findById(req.userId).select("-password");
+  res.json(user);
+});
+
+/* ===========================
+   CREATE ORDER (TEST)
+=========================== */
+app.post("/api/create-order", auth, async (req,res)=>{
+
+  const order = new Order({
+    userId: req.userId,
+    totalAmount: req.body.totalAmount || 1000
+  });
+
+  await order.save();
+
+  res.json({ success:true });
+});
+
+/* ===========================
+   GET USER ORDERS
+=========================== */
+app.get("/api/my-orders", auth, async (req,res)=>{
+
+  const orders = await Order.find({ userId:req.userId })
+    .sort({ createdAt:-1 });
+
+  res.json(orders);
 });
 
 /* ===========================
