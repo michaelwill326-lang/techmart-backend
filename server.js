@@ -34,12 +34,31 @@ const userSchema = new mongoose.Schema({
 const User = mongoose.model("User", userSchema);
 
 /* ===========================
-   ORDER MODEL
+   ORDER MODEL (UPGRADED)
 =========================== */
 const orderSchema = new mongoose.Schema({
   userId: String,
   totalAmount: Number,
-  status: { type:String, default:"Processing" }
+
+  status: {
+    type:String,
+    default:"Processing"
+  },
+
+  trackingNumber: {
+    type:String,
+    default: () => "TRK" + Date.now()
+  },
+
+  items: [
+    {
+      name: String,
+      price: Number,
+      quantity: Number,
+      image: String
+    }
+  ]
+
 },{ timestamps:true });
 
 const Order = mongoose.model("Order", orderSchema);
@@ -172,16 +191,27 @@ app.get("/api/profile", auth, async (req,res)=>{
 =========================== */
 app.post("/api/create-order", auth, async (req,res)=>{
 
-  const { totalAmount } = req.body;
+  const { totalAmount, items } = req.body;
+
+  if(!totalAmount || !items){
+    return res.status(400).json({
+      success:false,
+      message:"Missing order data"
+    });
+  }
 
   const order = new Order({
     userId: req.userId,
-    totalAmount
+    totalAmount,
+    items
   });
 
   await order.save();
 
-  res.json({ success:true });
+  res.json({
+    success:true,
+    order
+  });
 
 });
 
@@ -194,6 +224,28 @@ app.get("/api/my-orders", auth, async (req,res)=>{
     .sort({ createdAt:-1 });
 
   res.json(orders);
+
+});
+
+/* ===========================
+   TRACK ORDER
+=========================== */
+app.get("/api/track/:trackingNumber", async (req,res)=>{
+
+  const order = await Order.findOne({
+    trackingNumber: req.params.trackingNumber
+  });
+
+  if(!order){
+    return res.json({ error:"Order not found" });
+  }
+
+  res.json({
+    trackingNumber: order.trackingNumber,
+    status: order.status,
+    items: order.items,
+    totalAmount: order.totalAmount
+  });
 
 });
 
