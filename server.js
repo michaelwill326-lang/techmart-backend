@@ -6,7 +6,7 @@ const mongoose = require("mongoose");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const axios = require("axios");
-
+console.log("🔥 NEW VERSION DEPLOYED");
 const app = express();
 
 /* ===========================
