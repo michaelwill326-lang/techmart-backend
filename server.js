@@ -6,308 +6,234 @@ const mongoose = require("mongoose");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const axios = require("axios");
+const crypto = require("crypto");
+const OpenAI = require("openai");
+const compression = require("compression");
+const NodeCache = require("node-cache");
+const nodemailer = require("nodemailer");
 
 const app = express();
+
+/* ===========================
+⚡ PERFORMANCE
+=========================== */
+app.use(compression());
+
+const cache = new NodeCache({ stdTTL: 60 });
+
+app.use((req,res,next)=>{
+  res.setHeader("Cache-Control","public, max-age=300");
+  next();
+});
+
+/* ===========================
+WEBHOOK RAW BODY
+=========================== */
+app.use("/paystack/webhook", express.raw({ type: "*/*" }));
 
 app.use(cors());
 app.use(express.json());
 
-console.log("🔥 NEW VERSION DEPLOYED");
+const openai = new OpenAI({
+  apiKey: process.env.OPENAI_API_KEY
+});
+
+console.log("🔥 FINAL SYSTEM WITH REVIEWS ACTIVE");
 
 /* ===========================
-   MONGODB
+MONGODB
 =========================== */
 mongoose.connect(process.env.MONGO_URI)
 .then(()=>console.log("✅ MongoDB Connected"))
 .catch(err=>console.log("❌ Mongo Error:", err));
 
 /* ===========================
-   MODELS
+MODELS
 =========================== */
-
-// USER
 const userSchema = new mongoose.Schema({
   name:String,
   email:{ type:String, unique:true },
-  password:String
+  password:String,
+  phone:String,
+  isAdmin:{ type:Boolean, default:false }
 });
 const User = mongoose.model("User", userSchema);
 
-// ORDER
+/* ✅ PRODUCT WITH REVIEWS */
+const productSchema = new mongoose.Schema({
+  name:String,
+  price:Number,
+  image:String,
+  stock:{ type:Number, default:0 },
+
+  reviews:[
+    {
+      name:String,
+      rating:Number,
+      comment:String,
+      createdAt:{ type:Date, default:Date.now }
+    }
+  ]
+});
+const Product = mongoose.model("Product", productSchema);
+
 const orderSchema = new mongoose.Schema({
   userId:String,
   email:String,
   totalAmount:Number,
-  paymentReference:String,
-
-  status:{
-    type:String,
-    default:"Processing"
-  },
-
+  paymentReference:{ type:String, unique:true },
+  status:{ type:String, default:"Processing" },
   trackingNumber:{
     type:String,
     default:()=> "TRK" + Date.now()
   },
-
   items:[
-    {
-      name:String,
-      price:Number,
-      quantity:Number,
-      image:String
-    }
+    { name:String, price:Number, quantity:Number, image:String }
   ]
-
 },{ timestamps:true });
 
 const Order = mongoose.model("Order", orderSchema);
 
 /* ===========================
-   PRODUCTS (FIXED)
+AUTH
 =========================== */
-
-const products = [
-  {
-    _id:"1",
-    name:"Wireless Headphones",
-    price:25000,
-    image:"https://via.placeholder.com/200"
-  },
-  {
-    _id:"2",
-    name:"Smart Watch",
-    price:40000,
-    image:"https://via.placeholder.com/200"
-  },
-  {
-    _id:"3",
-    name:"Laptop",
-    price:350000,
-    image:"https://via.placeholder.com/200"
-  }
-];
-
-app.get("/api/products",(req,res)=>{
-  res.json(products);
-});
-
-/* ===========================
-   AUTH MIDDLEWARE
-=========================== */
-function auth(req,res,next){
-
+function adminAuth(req,res,next){
   const header = req.headers.authorization;
-
-  if(!header){
-    return res.status(401).json({ error:"No token" });
-  }
+  if(!header) return res.status(401).json({ error:"No token" });
 
   const token = header.split(" ")[1];
 
   try{
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
+
+    if(!decoded.isAdmin){
+      return res.status(403).json({ error:"Not admin" });
+    }
+
     req.userId = decoded.id;
     next();
+
   }catch{
     return res.status(401).json({ error:"Invalid token" });
   }
 }
 
 /* ===========================
-   AUTH
+PRODUCTS (CACHED)
 =========================== */
-
-// REGISTER
-app.post("/api/register", async (req,res)=>{
-
-  let { name,email,password } = req.body;
-
-  name = name?.trim();
-  email = email?.trim();
-  password = password?.trim();
-
-  if(!name || !email || !password){
-    return res.status(400).json({ success:false });
-  }
-
-  const exists = await User.findOne({ email });
-  if(exists){
-    return res.json({ success:false, message:"User exists" });
-  }
-
-  const hashed = await bcrypt.hash(password,10);
-
-  const user = new User({
-    name,
-    email,
-    password:hashed
-  });
-
-  await user.save();
-
-  res.json({ success:true });
-});
-
-// LOGIN
-app.post("/api/login", async (req,res)=>{
-
-  let { email,password } = req.body;
-
-  email = email?.trim();
-  password = password?.trim();
-
-  const user = await User.findOne({ email });
-
-  if(!user){
-    return res.json({ success:false });
-  }
-
-  const match = await bcrypt.compare(password,user.password);
-
-  if(!match){
-    return res.json({ success:false });
-  }
-
-  const token = jwt.sign(
-    { id:user._id },
-    process.env.JWT_SECRET,
-    { expiresIn:"7d" }
-  );
-
-  res.json({
-    success:true,
-    token,
-    user
-  });
-
-});
-
-/* ===========================
-   ORDERS
-=========================== */
-
-app.get("/api/my-orders", auth, async (req,res)=>{
-  const orders = await Order.find({ userId:req.userId })
-  .sort({ createdAt:-1 });
-
-  res.json(orders);
-});
-
-app.get("/api/track/:trackingNumber", async (req,res)=>{
-  const order = await Order.findOne({
-    trackingNumber:req.params.trackingNumber
-  });
-
-  if(!order){
-    return res.json({ error:"Not found" });
-  }
-
-  res.json(order);
-});
-
-/* ===========================
-   PAYSTACK INIT
-=========================== */
-app.post("/initialize-payment", async (req,res)=>{
-
+app.get("/api/products", async (req,res)=>{
   try{
+    const cached = cache.get("products");
+    if(cached) return res.json(cached);
 
-    const { email, amount, items, userId } = req.body;
+    const products = await Product.find().lean();
+    cache.set("products", products);
 
-    console.log("PAYSTACK INPUT:", { email, amount });
-
-    const response = await axios.post(
-      "https://api.paystack.co/transaction/initialize",
-      {
-        email,
-        amount: Math.round(amount * 100), // ✅ FIXED
-        callback_url: `${process.env.FRONTEND_URL}/success`,
-        metadata:{
-          items,
-          userId,
-          amount
-        }
-      },
-      {
-        headers:{
-          Authorization:`Bearer ${process.env.PAYSTACK_SECRET_KEY}`,
-          "Content-Type":"application/json"
-        }
-      }
-    );
-
-    res.json({
-      authorization_url: response.data.data.authorization_url
-    });
+    res.json(products);
 
   }catch(err){
-
-    console.error("PAYSTACK ERROR:", err.response?.data || err.message);
-
-    res.status(500).json({
-      error:"Payment failed",
-      details: err.response?.data
-    });
-
+    res.status(500).json({ error:"Failed to fetch products" });
   }
-
 });
 
 /* ===========================
-   VERIFY PAYMENT
+⭐ ADD REVIEW
 =========================== */
-app.get("/verify-payment/:reference", async (req,res)=>{
-
+app.post("/api/products/:id/review", async (req,res)=>{
   try{
 
-    const { reference } = req.params;
+    const { name, rating, comment } = req.body;
 
-    const response = await axios.get(
-      `https://api.paystack.co/transaction/verify/${reference}`,
-      {
-        headers:{
-          Authorization:`Bearer ${process.env.PAYSTACK_SECRET_KEY}`
-        }
-      }
-    );
-
-    const data = response.data.data;
-
-    if(data.status === "success"){
-
-      const metadata = data.metadata;
-
-      const order = new Order({
-        userId: metadata.userId,
-        email: data.customer.email,
-        totalAmount: metadata.amount,
-        paymentReference: reference,
-        items: metadata.items
-      });
-
-      await order.save();
-
-      return res.json({
-        success:true,
-        order
-      });
-
-    }else{
-      return res.json({ success:false });
+    if(!name || !rating || !comment){
+      return res.status(400).json({ error:"All fields required" });
     }
+
+    const product = await Product.findById(req.params.id);
+
+    if(!product){
+      return res.status(404).json({ error:"Product not found" });
+    }
+
+    product.reviews.push({
+      name,
+      rating:Number(rating),
+      comment
+    });
+
+    await product.save();
+
+    res.json({ success:true });
 
   }catch(err){
     console.error(err);
-    res.status(500).json({ error:"Verification failed" });
+    res.status(500).json({ error:"Failed to add review" });
   }
-
 });
 
 /* ===========================
-   SERVER
+⭐ GET REVIEWS
 =========================== */
-const PORT = process.env.PORT || 5002;
+app.get("/api/products/:id/reviews", async (req,res)=>{
+  try{
+
+    const product = await Product.findById(req.params.id).lean();
+
+    if(!product){
+      return res.status(404).json({ error:"Product not found" });
+    }
+
+    res.json(product.reviews || []);
+
+  }catch(err){
+    res.status(500).json({ error:"Failed to load reviews" });
+  }
+});
+
+/* ===========================
+ADMIN LOGIN
+=========================== */
+app.post("/api/admin/login", async (req,res)=>{
+  try{
+
+    const { email,password } = req.body;
+
+    const user = await User.findOne({ email }).lean();
+
+    if(!user || !user.isAdmin){
+      return res.json({ success:false });
+    }
+
+    const match = await bcrypt.compare(password,user.password);
+
+    if(!match){
+      return res.json({ success:false });
+    }
+
+    const token = jwt.sign(
+      { id:user._id, isAdmin:true },
+      process.env.JWT_SECRET,
+      { expiresIn:"7d" }
+    );
+
+    res.json({ success:true, token });
+
+  }catch{
+    res.status(500).json({ error:"Login failed" });
+  }
+});
+
+/* ===========================
+ORDERS
+=========================== */
+app.get("/api/admin/orders", adminAuth, async (req,res)=>{
+  const orders = await Order.find().sort({ createdAt:-1 }).lean();
+  res.json(orders);
+});
+
+/* ===========================
+SERVER
+=========================== */
+const PORT = process.env.PORT || 10000;
 
 app.listen(PORT,()=>{
   console.log("🚀 Server running on port " + PORT);
