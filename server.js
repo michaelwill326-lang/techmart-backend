@@ -3,64 +3,63 @@ require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
 const mongoose = require("mongoose");
-const bcrypt = require("bcryptjs");
-const jwt = require("jsonwebtoken");
+const http = require("http");
+const { Server } = require("socket.io");
 const axios = require("axios");
-const crypto = require("crypto");
-const OpenAI = require("openai");
 const compression = require("compression");
-const NodeCache = require("node-cache");
-const nodemailer = require("nodemailer");
+
+// 🔥 REDIS + QUEUE
+const IORedis = require("ioredis");
+const { Queue } = require("bullmq");
 
 const app = express();
 
 /* ===========================
-⚡ PERFORMANCE
+⚡ MIDDLEWARE
 =========================== */
-app.use(compression());
-
-const cache = new NodeCache({ stdTTL: 60 });
-
-app.use((req,res,next)=>{
-  res.setHeader("Cache-Control","public, max-age=300");
-  next();
-});
-
-/* ===========================
-WEBHOOK RAW BODY
-=========================== */
-app.use("/paystack/webhook", express.raw({ type: "*/*" }));
-
 app.use(cors());
 app.use(express.json());
-
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY
-});
-
-console.log("🔥 FINAL SYSTEM WITH REVIEWS ACTIVE");
+app.use(compression());
 
 /* ===========================
-MONGODB
+🔗 REDIS CONNECTION
+=========================== */
+const connection = new IORedis(process.env.REDIS_URL);
+
+connection.on("connect", () => {
+  console.log("✅ Redis Connected");
+});
+
+connection.on("error", (err) => {
+  console.error("❌ Redis Error:", err);
+});
+
+/* ===========================
+📦 QUEUE (ORDER PROCESSING)
+=========================== */
+const orderQueue = new Queue("orderQueue", {
+  connection
+});
+
+/* ===========================
+🧠 DATABASE
 =========================== */
 mongoose.connect(process.env.MONGO_URI)
 .then(()=>console.log("✅ MongoDB Connected"))
 .catch(err=>console.log("❌ Mongo Error:", err));
 
 /* ===========================
-MODELS
+📊 MODELS
 =========================== */
-const userSchema = new mongoose.Schema({
+const User = mongoose.model("User", new mongoose.Schema({
   name:String,
   email:{ type:String, unique:true },
   password:String,
   phone:String,
   isAdmin:{ type:Boolean, default:false }
-});
-const User = mongoose.model("User", userSchema);
+}));
 
-/* ✅ PRODUCT WITH REVIEWS */
-const productSchema = new mongoose.Schema({
+const Product = mongoose.model("Product", new mongoose.Schema({
   name:String,
   price:Number,
   image:String,
@@ -74,72 +73,73 @@ const productSchema = new mongoose.Schema({
       createdAt:{ type:Date, default:Date.now }
     }
   ]
-});
-const Product = mongoose.model("Product", productSchema);
+}));
 
-const orderSchema = new mongoose.Schema({
-  userId:String,
+const Order = mongoose.model("Order", new mongoose.Schema({
   email:String,
+  items:Array,
   totalAmount:Number,
-  paymentReference:{ type:String, unique:true },
-  status:{ type:String, default:"Processing" },
-  trackingNumber:{
-    type:String,
-    default:()=> "TRK" + Date.now()
-  },
-  items:[
-    { name:String, price:Number, quantity:Number, image:String }
-  ]
-},{ timestamps:true });
-
-const Order = mongoose.model("Order", orderSchema);
+  status:{ type:String, default:"Pending" },
+  createdAt:{ type:Date, default:Date.now }
+}));
 
 /* ===========================
-AUTH
+🌐 SOCKET.IO
 =========================== */
-function adminAuth(req,res,next){
-  const header = req.headers.authorization;
-  if(!header) return res.status(401).json({ error:"No token" });
+const server = http.createServer(app);
 
-  const token = header.split(" ")[1];
+const io = new Server(server, {
+  cors:{ origin:"*" }
+});
 
-  try{
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+app.set("io", io);
 
-    if(!decoded.isAdmin){
-      return res.status(403).json({ error:"Not admin" });
-    }
+io.on("connection", (socket)=>{
+  console.log("⚡ Admin connected:", socket.id);
 
-    req.userId = decoded.id;
-    next();
+  socket.on("disconnect", ()=>{
+    console.log("❌ Admin disconnected:", socket.id);
+  });
+});
 
-  }catch{
-    return res.status(401).json({ error:"Invalid token" });
-  }
+/* ===========================
+📡 EVENT EMITTER
+=========================== */
+function emitEvent(type, payload){
+  io.emit(type, payload);
 }
 
 /* ===========================
-PRODUCTS (CACHED)
+🛒 CREATE ORDER (QUEUE BASED)
 =========================== */
-app.get("/api/products", async (req,res)=>{
+app.post("/api/order", async (req,res)=>{
+
   try{
-    const cached = cache.get("products");
-    if(cached) return res.json(cached);
 
-    const products = await Product.find().lean();
-    cache.set("products", products);
+    const order = await Order.create(req.body);
 
-    res.json(products);
+    // 🔥 Add to queue
+    await orderQueue.add("processOrder", {
+      orderId: order._id
+    });
+
+    // ⚡ Real-time update
+    emitEvent("order:new", order);
+
+    res.json({ success:true });
 
   }catch(err){
-    res.status(500).json({ error:"Failed to fetch products" });
+    console.error(err);
+    res.status(500).json({ error:"Order failed" });
   }
+
 });
 
 /* ===========================
 ⭐ ADD REVIEW
 =========================== */
 app.post("/api/products/:id/review", async (req,res)=>{
+
   try{
 
     const { name, rating, comment } = req.body;
@@ -162,79 +162,45 @@ app.post("/api/products/:id/review", async (req,res)=>{
 
     await product.save();
 
+    emitEvent("review:new", { productId: product._id });
+
     res.json({ success:true });
 
   }catch(err){
-    console.error(err);
-    res.status(500).json({ error:"Failed to add review" });
+    res.status(500).json({ error:"Review failed" });
   }
+
 });
 
 /* ===========================
-⭐ GET REVIEWS
+📦 GET PRODUCTS
 =========================== */
-app.get("/api/products/:id/reviews", async (req,res)=>{
-  try{
-
-    const product = await Product.findById(req.params.id).lean();
-
-    if(!product){
-      return res.status(404).json({ error:"Product not found" });
-    }
-
-    res.json(product.reviews || []);
-
-  }catch(err){
-    res.status(500).json({ error:"Failed to load reviews" });
-  }
+app.get("/api/products", async (req,res)=>{
+  const products = await Product.find().lean();
+  res.json(products);
 });
 
 /* ===========================
-ADMIN LOGIN
+📊 ADMIN DASHBOARD
 =========================== */
-app.post("/api/admin/login", async (req,res)=>{
-  try{
+app.get("/api/admin/dashboard", async (req,res)=>{
 
-    const { email,password } = req.body;
+  const orders = await Order.find().lean();
+  const products = await Product.find().lean();
 
-    const user = await User.findOne({ email }).lean();
+  res.json({
+    totalOrders: orders.length,
+    totalRevenue: orders.reduce((a,b)=>a+(b.totalAmount||0),0),
+    products
+  });
 
-    if(!user || !user.isAdmin){
-      return res.json({ success:false });
-    }
-
-    const match = await bcrypt.compare(password,user.password);
-
-    if(!match){
-      return res.json({ success:false });
-    }
-
-    const token = jwt.sign(
-      { id:user._id, isAdmin:true },
-      process.env.JWT_SECRET,
-      { expiresIn:"7d" }
-    );
-
-    res.json({ success:true, token });
-
-  }catch{
-    res.status(500).json({ error:"Login failed" });
-  }
 });
 
 /* ===========================
-ORDERS
-=========================== */
-app.get("/api/admin/orders", adminAuth, async (req,res)=>{
-  const orders = await Order.find().sort({ createdAt:-1 }).lean();
-  res.json(orders);
-});
-
-/* ===========================
-SERVER
+🚀 SERVER START
 =========================== */
 const PORT = process.env.PORT || 10000;
 
-app.listen(PORT,()=>{
-  console.log("🚀 Server running on port " + PORT);
+server.listen(PORT, ()=>{
+  console.log("🚀 Level 6 Server running on port " + PORT);
 });
