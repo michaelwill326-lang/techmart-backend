@@ -5,7 +5,6 @@ const cors = require("cors");
 const mongoose = require("mongoose");
 const http = require("http");
 const { Server } = require("socket.io");
-const axios = require("axios");
 const compression = require("compression");
 
 // 🔥 REDIS + QUEUE
@@ -24,7 +23,9 @@ app.use(compression());
 /* ===========================
 🔗 REDIS CONNECTION
 =========================== */
-const connection = new IORedis(process.env.REDIS_URL);
+const connection = new IORedis(process.env.REDIS_URL, {
+  maxRetriesPerRequest: null
+});
 
 connection.on("connect", () => {
   console.log("✅ Redis Connected");
@@ -35,11 +36,11 @@ connection.on("error", (err) => {
 });
 
 /* ===========================
-📦 QUEUE (ORDER PROCESSING)
+📦 QUEUE
 =========================== */
-const orderQueue = new Queue("orderQueue", {
-  connection
-});
+const orderQueue = new Queue("orderQueue", { connection });
+
+console.log("✅ Order Queue Ready");
 
 /* ===========================
 🧠 DATABASE
@@ -76,12 +77,30 @@ const Product = mongoose.model("Product", new mongoose.Schema({
 }));
 
 const Order = mongoose.model("Order", new mongoose.Schema({
+  userId:String,
   email:String,
-  items:Array,
   totalAmount:Number,
-  status:{ type:String, default:"Pending" },
-  createdAt:{ type:Date, default:Date.now }
-}));
+  paymentReference:String,
+
+  status:{
+    type:String,
+    default:"Processing"
+  },
+
+  trackingNumber:{
+    type:String,
+    default:()=> "TRK" + Date.now()
+  },
+
+  items:[
+    {
+      name:String,
+      price:Number,
+      quantity:Number,
+      image:String
+    }
+  ]
+},{ timestamps:true }));
 
 /* ===========================
 🌐 SOCKET.IO
@@ -110,7 +129,7 @@ function emitEvent(type, payload){
 }
 
 /* ===========================
-🛒 CREATE ORDER (QUEUE BASED)
+🛒 CREATE ORDER
 =========================== */
 app.post("/api/order", async (req,res)=>{
 
@@ -118,21 +137,34 @@ app.post("/api/order", async (req,res)=>{
 
     const order = await Order.create(req.body);
 
-    // 🔥 Add to queue
-    await orderQueue.add("processOrder", {
-      orderId: order._id
-    });
+    // 🔥 SEND TO QUEUE
+    await orderQueue.add(
+      "processOrder",
+      {
+        orderId: order._id
+      },
+      {
+        attempts: 3,
+        backoff: 5000
+      }
+    );
 
-    // ⚡ Real-time update
+    // ⚡ LIVE UPDATE
     emitEvent("order:new", order);
 
-    res.json({ success:true });
+    res.json({
+      success:true,
+      order
+    });
 
   }catch(err){
-    console.error(err);
-    res.status(500).json({ error:"Order failed" });
-  }
 
+    console.error("ORDER ERROR:", err);
+
+    res.status(500).json({
+      error:"Order failed"
+    });
+  }
 });
 
 /* ===========================
@@ -167,17 +199,21 @@ app.post("/api/products/:id/review", async (req,res)=>{
     res.json({ success:true });
 
   }catch(err){
+    console.error(err);
     res.status(500).json({ error:"Review failed" });
   }
-
 });
 
 /* ===========================
 📦 GET PRODUCTS
 =========================== */
 app.get("/api/products", async (req,res)=>{
-  const products = await Product.find().lean();
-  res.json(products);
+  try{
+    const products = await Product.find().lean();
+    res.json(products);
+  }catch{
+    res.status(500).json({ error:"Failed to load products" });
+  }
 });
 
 /* ===========================
@@ -185,15 +221,20 @@ app.get("/api/products", async (req,res)=>{
 =========================== */
 app.get("/api/admin/dashboard", async (req,res)=>{
 
-  const orders = await Order.find().lean();
-  const products = await Product.find().lean();
+  try{
 
-  res.json({
-    totalOrders: orders.length,
-    totalRevenue: orders.reduce((a,b)=>a+(b.totalAmount||0),0),
-    products
-  });
+    const orders = await Order.find().lean();
+    const products = await Product.find().lean();
 
+    res.json({
+      totalOrders: orders.length,
+      totalRevenue: orders.reduce((a,b)=>a+(b.totalAmount||0),0),
+      products
+    });
+
+  }catch(err){
+    res.status(500).json({ error:"Dashboard failed" });
+  }
 });
 
 /* ===========================
