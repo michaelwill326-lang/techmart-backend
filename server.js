@@ -12,7 +12,19 @@ const IORedis = require("ioredis");
 const { Queue } = require("bullmq");
 
 const app = express();
+const { QueueEvents } = require("bullmq");
 
+const queueEvents = new QueueEvents("orderQueue", {
+  connection
+});
+
+queueEvents.on("completed", ({ jobId }) => {
+  console.log("✅ Job completed:", jobId);
+});
+
+queueEvents.on("failed", ({ jobId, failedReason }) => {
+  console.log("❌ Job failed:", jobId, failedReason);
+});
 /* ===========================
 ⚡ MIDDLEWARE
 =========================== */
@@ -235,6 +247,56 @@ app.get("/api/admin/dashboard", async (req,res)=>{
   }catch(err){
     res.status(500).json({ error:"Dashboard failed" });
   }
+
+});
+
+
+/* ===========================
+⚙️ QUEUE MONITORING
+=========================== */
+
+// 📊 GET ALL JOBS
+app.get("/api/admin/jobs", async (req, res) => {
+
+  try {
+
+    const waiting = await orderQueue.getWaiting();
+    const active = await orderQueue.getActive();
+    const completed = await orderQueue.getCompleted();
+    const failed = await orderQueue.getFailed();
+
+    res.json({
+      waiting,
+      active,
+      completed,
+      failed
+    });
+
+  } catch (err) {
+    res.status(500).json({ error: "Failed to fetch jobs" });
+  }
+
+});
+
+// 🔁 RETRY FAILED JOB
+app.post("/api/admin/jobs/:id/retry", async (req, res) => {
+
+  try {
+
+    const job = await orderQueue.getJob(req.params.id);
+
+    if (!job) {
+      return res.status(404).json({ error: "Job not found" });
+    }
+
+    await job.retry();
+
+    res.json({ success: true });
+
+  } catch (err) {
+    res.status(500).json({ error: "Retry failed" });
+  }
+
 });
 
 /* ===========================
