@@ -68,6 +68,11 @@ const worker = new Worker(
     }
 
     /* ===========================
+    ⏳ SIMULATE PROCESSING
+    =========================== */
+    await new Promise(res => setTimeout(res, 1000));
+
+    /* ===========================
     📧 SEND EMAIL
     =========================== */
     try {
@@ -78,6 +83,7 @@ const worker = new Worker(
         html: `
           <h2>Order Confirmed</h2>
           <p>Total: ₦${order.totalAmount}</p>
+          <p>Status: ${order.status}</p>
         `
       });
 
@@ -98,25 +104,14 @@ const worker = new Worker(
       console.log("⚠️ AI service skipped");
     }
 
-    /* ===========================
-    ⏱️ SIMULATE PROCESSING
-    =========================== */
-    await new Promise(res => setTimeout(res, 1000));
-
-    /* ===========================
-    ✅ UPDATE ORDER STATUS
-    =========================== */
-    order.status = "Processed";
-    await order.save();
-
-    console.log("✅ Order processed:", orderId);
+    console.log("✅ Order fully processed:", orderId);
 
     return true;
   },
   {
     connection,
     concurrency: 5, // 🔥 process multiple jobs
-    attempts: 5, // 🔥 retry automatically
+    attempts: 5, // 🔁 retry failed jobs
     backoff: {
       type: "exponential",
       delay: 2000
@@ -125,7 +120,7 @@ const worker = new Worker(
 );
 
 /* ===========================
-📊 EVENTS (VERY IMPORTANT)
+📊 EVENTS (IMPORTANT)
 =========================== */
 worker.on("completed", (job) => {
   console.log("✅ Job completed:", job.id);
