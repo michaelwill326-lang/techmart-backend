@@ -10,7 +10,7 @@ const IORedis = require("ioredis");
 🔗 REDIS CONNECTION
 =========================== */
 const connection = new IORedis(process.env.REDIS_URL, {
-  maxRetriesPerRequest: null,
+  maxRetriesPerRequest: null
 });
 
 connection.on("connect", () => {
@@ -26,30 +26,18 @@ connection.on("error", (err) => {
 =========================== */
 mongoose.connect(process.env.MONGO_URI)
   .then(() => console.log("✅ Worker MongoDB Connected"))
-  .catch(err => console.error("❌ Mongo Error:", err));
+  .catch(err => console.log("❌ Mongo Error:", err));
 
 /* ===========================
 📦 ORDER MODEL
-(MUST MATCH server.js)
 =========================== */
-const orderSchema = new mongoose.Schema({
-  userId: String,
+const Order = mongoose.model("Order", new mongoose.Schema({
   email: String,
+  items: Array,
   totalAmount: Number,
-  paymentReference: String,
-  status: { type: String, default: "Processing" },
-  trackingNumber: String,
-  items: [
-    {
-      name: String,
-      price: Number,
-      quantity: Number,
-      image: String
-    }
-  ]
-}, { timestamps: true });
-
-const Order = mongoose.model("Order", orderSchema);
+  status: { type: String, default: "Pending" },
+  createdAt: { type: Date, default: Date.now }
+}));
 
 /* ===========================
 📧 EMAIL SETUP
@@ -63,17 +51,16 @@ const transporter = nodemailer.createTransport({
 });
 
 /* ===========================
-⚙️ WORKER (QUEUE PROCESSOR)
+⚙️ WORKER PROCESSOR
 =========================== */
 const worker = new Worker(
-  "orderQueue", // ⚠️ MUST MATCH server.js
+  "orderQueue",
   async (job) => {
 
     const { orderId } = job.data;
 
     console.log("📦 Processing order:", orderId);
 
-    // 🔍 Get order
     const order = await Order.findById(orderId);
 
     if (!order) {
@@ -84,53 +71,61 @@ const worker = new Worker(
     📧 SEND EMAIL
     =========================== */
     try {
-
       await transporter.sendMail({
         from: `TechMart <${process.env.EMAIL_USER}>`,
         to: order.email,
         subject: "🛒 Order Confirmation",
         html: `
           <h2>Order Confirmed</h2>
-          <p><strong>Total:</strong> ₦${order.totalAmount}</p>
-          <p><strong>Tracking:</strong> ${order.trackingNumber}</p>
+          <p>Total: ₦${order.totalAmount}</p>
         `
       });
 
       console.log("✅ Email sent");
 
     } catch (err) {
-      console.error("❌ Email failed:", err.message);
-      throw err; // 🔁 retry job
+      console.log("❌ Email failed:", err.message);
+      throw err; // 🔥 triggers retry
     }
 
     /* ===========================
-    🔄 UPDATE ORDER STATUS
-    =========================== */
-    order.status = "Confirmed";
-    await order.save();
-
-    console.log("✅ Order updated");
-
-    /* ===========================
-    🤖 OPTIONAL AI CALL
+    🤖 AI SERVICE (OPTIONAL)
     =========================== */
     try {
       await axios.post("http://localhost:6000/analyze-order", order);
       console.log("🤖 AI processed");
-    } catch {
-      console.log("⚠️ AI service not running (skipped)");
+    } catch (err) {
+      console.log("⚠️ AI service skipped");
     }
+
+    /* ===========================
+    ⏱️ SIMULATE PROCESSING
+    =========================== */
+    await new Promise(res => setTimeout(res, 1000));
+
+    /* ===========================
+    ✅ UPDATE ORDER STATUS
+    =========================== */
+    order.status = "Processed";
+    await order.save();
+
+    console.log("✅ Order processed:", orderId);
 
     return true;
   },
   {
     connection,
-    concurrency: 5 // 🔥 parallel jobs
+    concurrency: 5, // 🔥 process multiple jobs
+    attempts: 5, // 🔥 retry automatically
+    backoff: {
+      type: "exponential",
+      delay: 2000
+    }
   }
 );
 
 /* ===========================
-📊 WORKER EVENTS
+📊 EVENTS (VERY IMPORTANT)
 =========================== */
 worker.on("completed", (job) => {
   console.log("✅ Job completed:", job.id);
