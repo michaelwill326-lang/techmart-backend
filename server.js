@@ -4,6 +4,7 @@ const express = require("express");
 const cors = require("cors");
 const mongoose = require("mongoose");
 const http = require("http");
+const { Server } = require("socket.io");
 const compression = require("compression");
 const jwt = require("jsonwebtoken");
 const bcrypt = require("bcryptjs");
@@ -15,19 +16,33 @@ const { Queue } = require("bullmq");
 const app = express();
 
 /* ===========================
-⚡ MIDDLEWARE
+🌐 CORS FIX (IMPORTANT)
 =========================== */
+const allowedOrigins = [
+  "http://localhost:5173",
+  "https://techmart-frontend.onrender.com"
+];
+
 app.use(cors({
-  origin: "https://techmart-frontend.onrender.com",
+  origin: function (origin, callback) {
+    if (!origin || allowedOrigins.includes(origin)) {
+      callback(null, true);
+    } else {
+      callback(new Error("CORS blocked"));
+    }
+  },
   methods: ["GET", "POST", "PUT", "DELETE"],
   allowedHeaders: ["Content-Type", "Authorization"]
 }));
 
+/* ===========================
+⚡ MIDDLEWARE
+=========================== */
 app.use(express.json());
 app.use(compression());
 
 /* ===========================
-🏠 ROOT ROUTE (FIX: Cannot GET /)
+🏠 ROOT ROUTE (FIXED)
 =========================== */
 app.get("/", (req, res) => {
   res.json({
@@ -75,7 +90,7 @@ const Order = mongoose.model("Order", new mongoose.Schema({
 }));
 
 /* ===========================
-🔐 ADMIN AUTH
+🔐 AUTH MIDDLEWARE
 =========================== */
 function adminAuth(req, res, next) {
   const token = req.headers.authorization?.split(" ")[1];
@@ -105,6 +120,8 @@ function adminAuth(req, res, next) {
 app.post("/api/admin/login", async (req, res) => {
   try {
     const { email, password } = req.body;
+
+    console.log("LOGIN ATTEMPT:", email);
 
     if (!email || !password) {
       return res.status(400).json({
@@ -139,7 +156,8 @@ app.post("/api/admin/login", async (req, res) => {
 
     res.json({
       success: true,
-      token
+      token,
+      email: user.email
     });
 
   } catch (err) {
@@ -152,7 +170,33 @@ app.post("/api/admin/login", async (req, res) => {
 });
 
 /* ===========================
-📦 ADMIN ORDERS
+🧪 TEST ROUTE
+=========================== */
+app.get("/api/admin/test", adminAuth, (req, res) => {
+  res.json({
+    message: "Admin access granted ✅",
+    userId: req.userId
+  });
+});
+
+/* ===========================
+📦 GET PRODUCTS (IMPORTANT)
+=========================== */
+app.get("/api/products", async (req, res) => {
+  try {
+    const products = await mongoose.connection.db
+      .collection("products")
+      .find()
+      .toArray();
+
+    res.json(products);
+  } catch (err) {
+    res.status(500).json({ error: "Failed to fetch products" });
+  }
+});
+
+/* ===========================
+📦 GET ORDERS (ADMIN)
 =========================== */
 app.get("/api/admin/orders", adminAuth, async (req, res) => {
   try {
@@ -183,7 +227,7 @@ app.put("/api/admin/orders/:id/status", adminAuth, async (req, res) => {
 });
 
 /* ===========================
-🚚 TRACKING UPDATE
+🚚 ADD TRACKING
 =========================== */
 app.put("/api/admin/orders/:id/tracking", adminAuth, async (req, res) => {
   try {
@@ -241,11 +285,20 @@ app.get("/api/orders/track/:trackingNumber", async (req, res) => {
 });
 
 /* ===========================
-🚀 SERVER START
+🚀 SERVER + SOCKET.IO
 =========================== */
 const PORT = process.env.PORT || 10000;
-
 const server = http.createServer(app);
+
+const io = new Server(server, {
+  cors: {
+    origin: allowedOrigins
+  }
+});
+
+io.on("connection", (socket) => {
+  console.log("⚡ Client connected:", socket.id);
+});
 
 server.listen(PORT, () => {
   console.log("🚀 Server running on port " + PORT);
