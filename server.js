@@ -5,301 +5,342 @@ const cors = require("cors");
 const mongoose = require("mongoose");
 const http = require("http");
 const { Server } = require("socket.io");
+const helmet = require("helmet");
 const compression = require("compression");
+const rateLimit = require("express-rate-limit");
 const jwt = require("jsonwebtoken");
 const bcrypt = require("bcryptjs");
+const axios = require("axios");
+const crypto = require("crypto");
 const { Parser } = require("json2csv");
 
-const IORedis = require("ioredis");
-const { Queue } = require("bullmq");
-
 const app = express();
+const server = http.createServer(app);
 
 /* ===========================
-🌐 CORS FIX (IMPORTANT)
+   🌐 ENV
 =========================== */
-const allowedOrigins = [
-  "http://localhost:5173",
-  "https://techmart-frontend.onrender.com"
-];
-
-app.use(cors({
-  origin: function (origin, callback) {
-    if (!origin || allowedOrigins.includes(origin)) {
-      callback(null, true);
-    } else {
-      callback(new Error("CORS blocked"));
-    }
-  },
-  methods: ["GET", "POST", "PUT", "DELETE"],
-  allowedHeaders: ["Content-Type", "Authorization"]
-}));
+const FRONTEND_URL = process.env.FRONTEND_URL;
 
 /* ===========================
-⚡ MIDDLEWARE
+   ⚡ SOCKET.IO
 =========================== */
-app.use(express.json());
-app.use(compression());
-
-/* ===========================
-🏠 ROOT ROUTE (FIXED)
-=========================== */
-app.get("/", (req, res) => {
-  res.json({
-    message: "🚀 TechMart Backend is running",
-    status: "OK"
-  });
+const io = new Server(server, {
+  cors: { origin: "*" }
 });
 
 /* ===========================
-🔗 REDIS
+   🌍 CORS
 =========================== */
-const connection = new IORedis(process.env.REDIS_URL);
+const allowedOrigins = [
+  "http://localhost:5173",
+  FRONTEND_URL
+];
 
-connection.on("connect", () => console.log("✅ Redis Connected"));
-connection.on("error", (err) => console.error("❌ Redis Error:", err));
-
-const orderQueue = new Queue("orderQueue", { connection });
+app.use(cors({
+  origin: (origin, cb) => {
+    if (!origin || allowedOrigins.includes(origin)) cb(null, true);
+    else cb(new Error("CORS blocked"));
+  },
+  credentials: true
+}));
 
 /* ===========================
-🧠 DATABASE
+   🛡 MIDDLEWARE
+=========================== */
+app.use(express.json());
+app.use(helmet());
+app.use(compression());
+
+app.use(rateLimit({
+  windowMs: 60 * 1000,
+  max: 150
+}));
+
+/* ===========================
+   🧠 DATABASE
 =========================== */
 mongoose.connect(process.env.MONGO_URI)
   .then(() => console.log("✅ MongoDB Connected"))
-  .catch(err => console.log("❌ Mongo Error:", err));
+  .catch(err => console.error("❌ MongoDB Error:", err));
 
 /* ===========================
-📊 MODELS
+   📦 MODELS
 =========================== */
 const User = mongoose.model("User", new mongoose.Schema({
   name: String,
   email: { type: String, unique: true },
+  phone: String,
   password: String,
-  isAdmin: { type: Boolean, default: false }
+  role: { type: String, enum: ["customer","vendor","admin"], default: "customer" },
+  otp: String,
+  otpExpires: Date,
+  createdAt: { type: Date, default: Date.now }
+}));
+
+const Product = mongoose.model("Product", new mongoose.Schema({
+  name: String,
+  description: String,
+  price: Number,
+  stock: Number,
+  images: [String],
+  vendorId: String,
+  reviews: [{ user: String, rating: Number, comment: String, createdAt: Date }],
+  createdAt: { type: Date, default: Date.now }
 }));
 
 const Order = mongoose.model("Order", new mongoose.Schema({
-  name: String,
-  email: String,
+  customerId: String,
+  vendorId: String,
   items: Array,
   amount: Number,
+  commission: Number,
+  reference: String,
   status: { type: String, default: "Pending" },
   trackingNumber: String,
-  carrier: String,
   createdAt: { type: Date, default: Date.now }
 }));
 
 /* ===========================
-🔐 AUTH MIDDLEWARE
+   🔐 AUTH MIDDLEWARE
 =========================== */
-function adminAuth(req, res, next) {
-  const token = req.headers.authorization?.split(" ")[1];
+function auth(role) {
+  return (req,res,next)=>{
+    const token = req.headers.authorization?.split(" ")[1];
+    if(!token) return res.status(401).json({ error:"No token" });
 
-  if (!token) {
-    return res.status(401).json({ error: "No token" });
-  }
+    try {
+      const decoded = jwt.verify(token, process.env.JWT_SECRET);
 
-  try {
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+      if(role && decoded.role !== role) {
+        return res.status(403).json({ error:"Forbidden" });
+      }
 
-    if (!decoded.isAdmin) {
-      return res.status(403).json({ error: "Not admin" });
+      req.user = decoded;
+      next();
+
+    } catch {
+      return res.status(401).json({ error:"Invalid token" });
     }
-
-    req.userId = decoded.id;
-    next();
-
-  } catch (err) {
-    return res.status(401).json({ error: "Invalid token" });
-  }
+  };
 }
 
 /* ===========================
-🔐 ADMIN LOGIN
+   🏠 ROOT
 =========================== */
-app.post("/api/admin/login", async (req, res) => {
+app.get("/", (req,res)=>{
+  res.json({ message:"🚀 TechMart SaaS API Running" });
+});
+
+/* ===========================
+   🔐 AUTH ROUTES
+=========================== */
+app.post("/api/auth/signup", async(req,res)=>{
+  try {
+    const { name, email, phone, password, role } = req.body;
+
+    const hashed = await bcrypt.hash(password, 10);
+
+    const user = await User.create({
+      name, email, phone,
+      password: hashed,
+      role
+    });
+
+    res.json({ success:true });
+
+  } catch(err) {
+    res.status(500).json({ error:"Signup failed" });
+  }
+});
+
+app.post("/api/auth/login", async(req,res)=>{
   try {
     const { email, password } = req.body;
 
-    console.log("LOGIN ATTEMPT:", email);
-
-    if (!email || !password) {
-      return res.status(400).json({
-        success: false,
-        message: "Missing fields"
-      });
-    }
-
     const user = await User.findOne({ email });
-
-    if (!user || !user.isAdmin) {
-      return res.status(401).json({
-        success: false,
-        message: "Invalid credentials"
-      });
-    }
+    if(!user) return res.status(401).json({ error:"Invalid credentials" });
 
     const match = await bcrypt.compare(password, user.password);
-
-    if (!match) {
-      return res.status(401).json({
-        success: false,
-        message: "Invalid credentials"
-      });
-    }
+    if(!match) return res.status(401).json({ error:"Invalid credentials" });
 
     const token = jwt.sign(
-      { id: user._id, isAdmin: true },
+      { id:user._id, role:user.role },
       process.env.JWT_SECRET,
-      { expiresIn: "7d" }
+      { expiresIn:"7d" }
     );
 
-    res.json({
-      success: true,
-      token,
-      email: user.email
-    });
+    res.json({ token, role:user.role });
 
-  } catch (err) {
-    console.error("LOGIN ERROR:", err);
-    res.status(500).json({
-      success: false,
-      message: "Server error"
-    });
+  } catch {
+    res.status(500).json({ error:"Login failed" });
   }
 });
 
 /* ===========================
-🧪 TEST ROUTE
+   📦 PRODUCTS
 =========================== */
-app.get("/api/admin/test", adminAuth, (req, res) => {
+app.get("/api/products", async(req,res)=>{
+  const products = await Product.find();
+  res.json(products);
+});
+
+app.post("/api/vendor/products", auth("vendor"), async(req,res)=>{
+  const product = await Product.create({
+    ...req.body,
+    vendorId: req.user.id
+  });
+
+  res.json(product);
+});
+
+/* ===========================
+   ⭐ REVIEWS
+=========================== */
+app.post("/api/products/:id/review", auth(), async(req,res)=>{
+  const product = await Product.findById(req.params.id);
+
+  product.reviews.push({
+    ...req.body,
+    user: req.user.id,
+    createdAt: new Date()
+  });
+
+  await product.save();
+  res.json(product);
+});
+
+/* ===========================
+   📦 ORDERS
+=========================== */
+app.post("/api/orders", auth(), async(req,res)=>{
+  const { items, amount } = req.body;
+
+  const reference = "TX-" + Date.now();
+  const commission = amount * 0.05;
+
+  const order = await Order.create({
+    customerId: req.user.id,
+    vendorId: items[0]?.vendorId,
+    items,
+    amount,
+    commission,
+    reference
+  });
+
+  io.emit("newOrder", order);
+
+  res.json(order);
+});
+
+/* ===========================
+   📊 ADMIN ANALYTICS
+=========================== */
+app.get("/api/admin/analytics", auth("admin"), async(req,res)=>{
+  const orders = await Order.find();
+
+  const totalRevenue = orders.reduce((sum,o)=>sum+o.amount,0);
+  const totalCommission = orders.reduce((sum,o)=>sum+o.commission,0);
+
   res.json({
-    message: "Admin access granted ✅",
-    userId: req.userId
+    totalRevenue,
+    totalCommission,
+    totalOrders: orders.length
   });
 });
 
 /* ===========================
-📦 GET PRODUCTS (IMPORTANT)
+   💳 PAYSTACK
 =========================== */
-app.get("/api/products", async (req, res) => {
+app.post("/api/paystack/init", async(req,res)=>{
   try {
-    const products = await mongoose.connection.db
-      .collection("products")
-      .find()
-      .toArray();
+    const { email, amount, cart } = req.body;
+    const reference = "TX-" + Date.now();
 
-    res.json(products);
-  } catch (err) {
-    res.status(500).json({ error: "Failed to fetch products" });
-  }
-});
-
-/* ===========================
-📦 GET ORDERS (ADMIN)
-=========================== */
-app.get("/api/admin/orders", adminAuth, async (req, res) => {
-  try {
-    const orders = await Order.find().sort({ createdAt: -1 });
-    res.json(orders);
-  } catch (err) {
-    res.status(500).json({ error: "Failed to fetch orders" });
-  }
-});
-
-/* ===========================
-✏️ UPDATE ORDER STATUS
-=========================== */
-app.put("/api/admin/orders/:id/status", adminAuth, async (req, res) => {
-  try {
-    const { status } = req.body;
-
-    const order = await Order.findByIdAndUpdate(
-      req.params.id,
-      { status },
-      { new: true }
-    );
-
-    res.json(order);
-  } catch (err) {
-    res.status(500).json({ error: "Failed to update status" });
-  }
-});
-
-/* ===========================
-🚚 ADD TRACKING
-=========================== */
-app.put("/api/admin/orders/:id/tracking", adminAuth, async (req, res) => {
-  try {
-    const { trackingNumber, carrier } = req.body;
-
-    const order = await Order.findByIdAndUpdate(
-      req.params.id,
-      { trackingNumber, carrier },
-      { new: true }
-    );
-
-    res.json(order);
-  } catch (err) {
-    res.status(500).json({ error: "Failed to update tracking" });
-  }
-});
-
-/* ===========================
-📊 EXPORT CSV
-=========================== */
-app.get("/api/admin/orders/export", adminAuth, async (req, res) => {
-  try {
-    const orders = await Order.find();
-
-    const parser = new Parser();
-    const csv = parser.parse(orders);
-
-    res.header("Content-Type", "text/csv");
-    res.attachment("orders.csv");
-    res.send(csv);
-
-  } catch (err) {
-    res.status(500).json({ error: "Export failed" });
-  }
-});
-
-/* ===========================
-🌍 TRACK ORDER (PUBLIC)
-=========================== */
-app.get("/api/orders/track/:trackingNumber", async (req, res) => {
-  try {
-    const order = await Order.findOne({
-      trackingNumber: req.params.trackingNumber
+    await Order.create({
+      customerId: email,
+      items: cart,
+      amount,
+      reference
     });
 
-    if (!order) {
-      return res.status(404).json({ error: "Order not found" });
-    }
+    const response = await axios.post(
+      "https://api.paystack.co/transaction/initialize",
+      {
+        email,
+        amount: amount * 100,
+        reference,
+        callback_url: `${FRONTEND_URL}/success`
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}`
+        }
+      }
+    );
 
-    res.json(order);
+    res.json({
+      url: response.data.data.authorization_url
+    });
 
   } catch (err) {
-    res.status(500).json({ error: "Tracking failed" });
+    res.status(500).json({ error:"Payment failed" });
   }
 });
 
 /* ===========================
-🚀 SERVER + SOCKET.IO
+   🔐 PAYSTACK WEBHOOK
+=========================== */
+app.post("/api/paystack/webhook", (req,res)=>{
+  const hash = crypto
+    .createHmac("sha512", process.env.PAYSTACK_SECRET_KEY)
+    .update(JSON.stringify(req.body))
+    .digest("hex");
+
+  if (hash === req.headers["x-paystack-signature"]) {
+    const event = req.body;
+
+    if (event.event === "charge.success") {
+      const ref = event.data.reference;
+
+      Order.findOneAndUpdate(
+        { reference: ref },
+        { status: "Paid" }
+      ).then(() => console.log("✅ Payment verified"));
+    }
+  }
+
+  res.sendStatus(200);
+});
+
+/* ===========================
+   📱 OTP (TERMII)
+=========================== */
+app.post("/api/auth/otp", async(req,res)=>{
+  const otp = Math.floor(100000 + Math.random()*900000);
+
+  await axios.post(
+    "https://api.termii.com/api/sms/send",
+    {
+      to: req.body.phone,
+      sms: `Your OTP is ${otp}`,
+      from: "TechMart"
+    },
+    {
+      headers: {
+        Authorization: process.env.TERMII_API_KEY
+      }
+    }
+  );
+
+  res.json({ success:true });
+});
+
+/* ===========================
+   🚀 START SERVER
 =========================== */
 const PORT = process.env.PORT || 10000;
-const server = http.createServer(app);
 
-const io = new Server(server, {
-  cors: {
-    origin: allowedOrigins
-  }
-});
-
-io.on("connection", (socket) => {
-  console.log("⚡ Client connected:", socket.id);
-});
-
-server.listen(PORT, () => {
-  console.log("🚀 Server running on port " + PORT);
+server.listen(PORT, ()=>{
+  console.log("🚀 TechMart SaaS running on port " + PORT);
 });
