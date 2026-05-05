@@ -3,63 +3,35 @@ require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
 const mongoose = require("mongoose");
-const http = require("http");
-const { Server } = require("socket.io");
-const helmet = require("helmet");
-const compression = require("compression");
-const rateLimit = require("express-rate-limit");
 const jwt = require("jsonwebtoken");
 const bcrypt = require("bcryptjs");
 const axios = require("axios");
-const crypto = require("crypto");
+const http = require("http");
+const { Server } = require("socket.io");
 
 const app = express();
-const server = http.createServer(app);
 
 /* ===========================
-   🌐 CORS (SAFE FOR DEBUG)
+   🌐 MIDDLEWARE
 =========================== */
-app.use(cors({
-  origin: "*"
-}));
-
-/* ===========================
-   ⚡ MIDDLEWARE
-=========================== */
+app.use(cors({ origin: "*" }));
 app.use(express.json());
-app.use(helmet());
-app.use(compression());
-
-app.use(rateLimit({
-  windowMs: 60 * 1000,
-  max: 200
-}));
 
 /* ===========================
    🧠 DATABASE
 =========================== */
 mongoose.connect(process.env.MONGO_URI)
   .then(() => console.log("✅ MongoDB Connected"))
-  .catch(err => console.error("❌ MongoDB Error:", err));
+  .catch(err => console.log(err));
 
 /* ===========================
-   📦 MODELS
+   👤 MODELS
 =========================== */
-const Product = mongoose.model("Product", new mongoose.Schema({
-  name: String,
-  description: String,
-  price: Number,
-  stock: Number,
-  images: [String],
-  createdAt: { type: Date, default: Date.now }
-}));
-
 const User = mongoose.model("User", new mongoose.Schema({
   name: String,
   email: { type: String, unique: true },
-  phone: String,
   password: String,
-  role: { type: String, default: "customer" },
+  role: { type: String, default: "customer" }
 }));
 
 const Order = mongoose.model("Order", new mongoose.Schema({
@@ -68,7 +40,16 @@ const Order = mongoose.model("Order", new mongoose.Schema({
   amount: Number,
   reference: String,
   status: { type: String, default: "Pending" },
+  trackingNumber: String,
   createdAt: { type: Date, default: Date.now }
+}));
+
+const Product = mongoose.model("Product", new mongoose.Schema({
+  name: String,
+  price: Number,
+  images: [String],
+  description: String,
+  stock: Number
 }));
 
 /* ===========================
@@ -76,6 +57,7 @@ const Order = mongoose.model("Order", new mongoose.Schema({
 =========================== */
 function auth(req, res, next) {
   const token = req.headers.authorization?.split(" ")[1];
+
   if (!token) return res.status(401).json({ error: "No token" });
 
   try {
@@ -87,77 +69,92 @@ function auth(req, res, next) {
   }
 }
 
+function adminOnly(req, res, next) {
+  const token = req.headers.authorization?.split(" ")[1];
+
+  if (!token) return res.status(401).json({ error: "No token" });
+
+  try {
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+
+    if (decoded.role !== "admin") {
+      return res.status(403).json({ error: "Admin only" });
+    }
+
+    req.user = decoded;
+    next();
+  } catch {
+    return res.status(401).json({ error: "Invalid token" });
+  }
+}
+
 /* ===========================
    🏠 ROOT
 =========================== */
 app.get("/", (req, res) => {
-  res.json({ message: "🚀 TechMart API Running" });
-});
-
-/* ===========================
-   📦 PRODUCTS (FIXED)
-=========================== */
-app.get("/api/products", async (req, res) => {
-  try {
-    const products = await Product.find();
-    res.json(products);
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "Failed to fetch products" });
-  }
-});
-
-/* ===========================
-   ➕ ADD PRODUCT (TEST)
-=========================== */
-app.post("/api/products", async (req, res) => {
-  try {
-    const product = await Product.create(req.body);
-    res.json(product);
-  } catch (err) {
-    res.status(500).json({ error: "Failed to create product" });
-  }
+  res.json({ status: "TechMart Enterprise API 🚀" });
 });
 
 /* ===========================
    🔐 AUTH
 =========================== */
 app.post("/api/auth/signup", async (req, res) => {
-  const { email, password } = req.body;
+  const { name, email, password } = req.body;
+
+  const exists = await User.findOne({ email });
+  if (exists) return res.status(400).json({ error: "User exists" });
 
   const hashed = await bcrypt.hash(password, 10);
 
-  await User.create({ email, password: hashed });
+  const user = await User.create({
+    name,
+    email,
+    password: hashed
+  });
 
-  res.json({ success: true });
+  const token = jwt.sign(
+    { id: user._id, email: user.email, role: user.role },
+    process.env.JWT_SECRET,
+    { expiresIn: "7d" }
+  );
+
+  res.json({ user, token });
 });
 
 app.post("/api/auth/login", async (req, res) => {
   const { email, password } = req.body;
 
   const user = await User.findOne({ email });
-  if (!user) return res.status(401).json({ error: "Invalid" });
+  if (!user) return res.status(400).json({ error: "User not found" });
 
   const match = await bcrypt.compare(password, user.password);
-  if (!match) return res.status(401).json({ error: "Invalid" });
+  if (!match) return res.status(400).json({ error: "Wrong password" });
 
   const token = jwt.sign(
-    { id: user._id },
+    { id: user._id, email: user.email, role: user.role },
     process.env.JWT_SECRET,
     { expiresIn: "7d" }
   );
 
-  res.json({ token });
+  res.json({ user, token });
+});
+
+/* ===========================
+   🛍 PRODUCTS
+=========================== */
+app.get("/api/products", async (req, res) => {
+  const products = await Product.find();
+  res.json(products);
 });
 
 /* ===========================
    📦 ORDERS
 =========================== */
-app.post("/api/orders", async (req, res) => {
-  const { email, items, amount } = req.body;
+app.post("/api/orders", auth, async (req, res) => {
+  const { items, amount } = req.body;
 
   const order = await Order.create({
-    email,
+    email: req.user.email,
     items,
     amount,
     reference: "TX-" + Date.now()
@@ -166,81 +163,173 @@ app.post("/api/orders", async (req, res) => {
   res.json(order);
 });
 
+app.get("/api/orders/me", auth, async (req, res) => {
+  const orders = await Order.find({ email: req.user.email });
+  res.json(orders);
+});
+
 /* ===========================
-   💳 PAYSTACK
+   💳 PAYSTACK INIT
 =========================== */
 app.post("/api/paystack/init", async (req, res) => {
-  try {
-    const { email, amount, cart } = req.body;
+  const { email, amount, cart } = req.body;
 
-    const reference = "TX-" + Date.now();
+  const reference = "TX-" + Date.now();
 
-    await Order.create({
+  await Order.create({
+    email,
+    items: cart,
+    amount,
+    reference
+  });
+
+  const response = await axios.post(
+    "https://api.paystack.co/transaction/initialize",
+    {
       email,
-      items: cart,
-      amount,
-      reference
+      amount: amount * 100,
+      reference,
+      callback_url: `${process.env.FRONTEND_URL}/success`
+    },
+    {
+      headers: {
+        Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}`
+      }
+    }
+  );
+
+  res.json({ url: response.data.data.authorization_url });
+});
+
+/* ===========================
+   🔍 VERIFY PAYMENT
+=========================== */
+app.get("/api/paystack/verify/:ref", async (req, res) => {
+  const ref = req.params.ref;
+
+  const response = await axios.get(
+    `https://api.paystack.co/transaction/verify/${ref}`,
+    {
+      headers: {
+        Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}`
+      }
+    }
+  );
+
+  const data = response.data.data;
+
+  if (data.status === "success") {
+    await Order.findOneAndUpdate(
+      { reference: ref },
+      { status: "Paid" }
+    );
+  }
+
+  res.json(data);
+});
+
+/* ===========================
+   👑 ADMIN APIs
+=========================== */
+app.get("/api/admin/stats", adminOnly, async (req, res) => {
+  const orders = await Order.find();
+  const users = await User.find();
+
+  const revenue = orders
+    .filter(o => o.status === "Paid")
+    .reduce((sum, o) => sum + o.amount, 0);
+
+  res.json({
+    totalOrders: orders.length,
+    totalUsers: users.length,
+    totalRevenue: revenue
+  });
+});
+
+app.get("/api/admin/orders", adminOnly, async (req, res) => {
+  const orders = await Order.find().sort({ createdAt: -1 });
+  res.json(orders);
+});
+
+app.put("/api/admin/orders/:id", adminOnly, async (req, res) => {
+  const { status, trackingNumber } = req.body;
+
+  const order = await Order.findByIdAndUpdate(
+    req.params.id,
+    { status, trackingNumber },
+    { new: true }
+  );
+
+  // 🔔 REAL-TIME EVENT
+  io.emit("orderUpdated", order);
+
+  res.json(order);
+});
+/* ===========================
+   📊 ANALYTICS DASHBOARD
+=========================== */
+app.get("/api/admin/analytics", adminOnly, async (req, res) => {
+  try {
+    const orders = await Order.find();
+    const users = await User.find();
+
+    const totalRevenue = orders
+      .filter(o => o.status === "Paid")
+      .reduce((sum, o) => sum + o.amount, 0);
+
+    const totalOrders = orders.length;
+    const totalUsers = users.length;
+
+    // 📈 Revenue per day
+    const revenueByDate = {};
+
+    orders.forEach(order => {
+      const date = new Date(order.createdAt).toLocaleDateString();
+
+      if (!revenueByDate[date]) {
+        revenueByDate[date] = 0;
+      }
+
+      if (order.status === "Paid") {
+        revenueByDate[date] += order.amount;
+      }
     });
 
-    const response = await axios.post(
-      "https://api.paystack.co/transaction/initialize",
-      {
-        email,
-        amount: amount * 100,
-        reference,
-        callback_url: process.env.FRONTEND_URL + "/success"
-      },
-      {
-        headers: {
-          Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}`
-        }
-      }
-    );
-
     res.json({
-      url: response.data.data.authorization_url
+      totalRevenue,
+      totalOrders,
+      totalUsers,
+      revenueByDate
     });
 
   } catch (err) {
-    console.error(err.response?.data || err.message);
-    res.status(500).json({ error: "Payment failed" });
+    res.status(500).json({ error: "Analytics failed" });
   }
 });
-
 /* ===========================
-   🔐 PAYSTACK WEBHOOK
+   ⚡ SOCKET.IO (REAL-TIME)
 =========================== */
-app.post("/api/paystack/webhook", (req, res) => {
-  const hash = crypto
-    .createHmac("sha512", process.env.PAYSTACK_SECRET_KEY)
-    .update(JSON.stringify(req.body))
-    .digest("hex");
-
-  if (hash === req.headers["x-paystack-signature"]) {
-    const event = req.body;
-
-    if (event.event === "charge.success") {
-      const ref = event.data.reference;
-
-      Order.findOneAndUpdate(
-        { reference: ref },
-        { status: "Paid" }
-      ).then(() => console.log("✅ Payment verified"));
-    }
-  }
-
-  res.sendStatus(200);
-});
-
-/* ===========================
-   ⚡ SOCKET.IO
-=========================== */
+const server = http.createServer(app);
 const io = new Server(server, {
   cors: { origin: "*" }
 });
 
-io.on("connection", socket => {
-  console.log("⚡ Client connected:", socket.id);
+const onlineUsers = new Map();
+
+io.on("connection", (socket) => {
+  console.log("⚡ Connected:", socket.id);
+
+  socket.on("register", (email) => {
+    onlineUsers.set(email, socket.id);
+  });
+
+  socket.on("disconnect", () => {
+    for (let [email, id] of onlineUsers) {
+      if (id === socket.id) {
+        onlineUsers.delete(email);
+      }
+    }
+  });
 });
 
 /* ===========================
