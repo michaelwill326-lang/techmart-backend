@@ -20,37 +20,76 @@ app.use(express.json());
 /* ===========================
    🧠 DATABASE
 =========================== */
-mongoose.connect(process.env.MONGO_URI)
+mongoose
+  .connect(process.env.MONGO_URI)
   .then(() => console.log("✅ MongoDB Connected"))
-  .catch(err => console.log(err));
+  .catch((err) => console.log(err));
 
 /* ===========================
    👤 MODELS
 =========================== */
-const User = mongoose.model("User", new mongoose.Schema({
-  name: String,
-  email: { type: String, unique: true },
-  password: String,
-  role: { type: String, default: "customer" }
-}));
+const User = mongoose.model(
+  "User",
+  new mongoose.Schema({
+    name: String,
+    email: String,
+    password: String,
+    role: { type: String, default: "customer" },
+    createdAt: { type: Date, default: Date.now },
+  })
+);
 
-const Order = mongoose.model("Order", new mongoose.Schema({
-  email: String,
-  items: Array,
-  amount: Number,
-  reference: String,
-  status: { type: String, default: "Pending" },
-  trackingNumber: String,
-  createdAt: { type: Date, default: Date.now }
-}));
+const Product = mongoose.model(
+  "Product",
+  new mongoose.Schema({
+    name: String,
+    price: Number,
+    images: [String],
+    description: String,
+    stock: Number,
+    vendorId: String,
+    vendorName: String,
+    category: String,
+    rating: { type: Number, default: 0 },
 
-const Product = mongoose.model("Product", new mongoose.Schema({
-  name: String,
-  price: Number,
-  images: [String],
-  description: String,
-  stock: Number
-}));
+    reviews: [
+      {
+        user: String,
+        comment: String,
+        stars: Number,
+        createdAt: {
+          type: Date,
+          default: Date.now,
+        },
+      },
+    ],
+
+    createdAt: {
+      type: Date,
+      default: Date.now,
+    },
+  })
+);
+
+const Order = mongoose.model(
+  "Order",
+  new mongoose.Schema({
+    email: String,
+    items: Array,
+    amount: Number,
+    status: {
+      type: String,
+      default: "Pending",
+    },
+    reference: String,
+    trackingNumber: String,
+
+    createdAt: {
+      type: Date,
+      default: Date.now,
+    },
+  })
+);
 
 /* ===========================
    🔐 AUTH MIDDLEWARE
@@ -58,33 +97,56 @@ const Product = mongoose.model("Product", new mongoose.Schema({
 function auth(req, res, next) {
   const token = req.headers.authorization?.split(" ")[1];
 
-  if (!token) return res.status(401).json({ error: "No token" });
+  if (!token) {
+    return res.status(401).json({
+      error: "No token",
+    });
+  }
 
   try {
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    const decoded = jwt.verify(
+      token,
+      process.env.JWT_SECRET
+    );
+
     req.user = decoded;
+
     next();
   } catch {
-    return res.status(401).json({ error: "Invalid token" });
+    return res.status(401).json({
+      error: "Invalid token",
+    });
   }
 }
 
 function adminOnly(req, res, next) {
   const token = req.headers.authorization?.split(" ")[1];
 
-  if (!token) return res.status(401).json({ error: "No token" });
+  if (!token) {
+    return res.status(401).json({
+      error: "No token",
+    });
+  }
 
   try {
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    const decoded = jwt.verify(
+      token,
+      process.env.JWT_SECRET
+    );
 
     if (decoded.role !== "admin") {
-      return res.status(403).json({ error: "Admin only" });
+      return res.status(403).json({
+        error: "Admin only",
+      });
     }
 
     req.user = decoded;
+
     next();
   } catch {
-    return res.status(401).json({ error: "Invalid token" });
+    return res.status(401).json({
+      error: "Invalid token",
+    });
   }
 }
 
@@ -92,243 +154,305 @@ function adminOnly(req, res, next) {
    🏠 ROOT
 =========================== */
 app.get("/", (req, res) => {
-  res.json({ status: "TechMart Enterprise API 🚀" });
+  res.json({
+    status: "TechMart Enterprise API 🚀",
+  });
 });
 
 /* ===========================
-   🔐 AUTH
+   🔐 AUTH ROUTES
 =========================== */
 app.post("/api/auth/signup", async (req, res) => {
-  const { name, email, password } = req.body;
+  try {
+    const { name, email, password } = req.body;
 
-  const exists = await User.findOne({ email });
-  if (exists) return res.status(400).json({ error: "User exists" });
+    const exists = await User.findOne({ email });
 
-  const hashed = await bcrypt.hash(password, 10);
+    if (exists) {
+      return res.status(400).json({
+        error: "User exists",
+      });
+    }
 
-  const user = await User.create({
-    name,
-    email,
-    password: hashed
-  });
+    const hashed = await bcrypt.hash(password, 10);
 
-  const token = jwt.sign(
-    { id: user._id, email: user.email, role: user.role },
-    process.env.JWT_SECRET,
-    { expiresIn: "7d" }
-  );
+    const user = await User.create({
+      name,
+      email,
+      password: hashed,
+    });
 
-  res.json({ user, token });
+    const token = jwt.sign(
+      {
+        id: user._id,
+        email: user.email,
+        role: user.role,
+      },
+      process.env.JWT_SECRET,
+      {
+        expiresIn: "7d",
+      }
+    );
+
+    res.json({ user, token });
+  } catch (err) {
+    console.log(err);
+
+    res.status(500).json({
+      error: "Signup failed",
+    });
+  }
 });
 
 app.post("/api/auth/login", async (req, res) => {
-  const { email, password } = req.body;
+  try {
+    const { email, password } = req.body;
 
-  const user = await User.findOne({ email });
-  if (!user) return res.status(400).json({ error: "User not found" });
+    const user = await User.findOne({ email });
 
-  const match = await bcrypt.compare(password, user.password);
-  if (!match) return res.status(400).json({ error: "Wrong password" });
+    if (!user) {
+      return res.status(400).json({
+        error: "User not found",
+      });
+    }
 
-  const token = jwt.sign(
-    { id: user._id, email: user.email, role: user.role },
-    process.env.JWT_SECRET,
-    { expiresIn: "7d" }
-  );
+    const match = await bcrypt.compare(
+      password,
+      user.password
+    );
 
-  res.json({ user, token });
+    if (!match) {
+      return res.status(400).json({
+        error: "Wrong password",
+      });
+    }
+
+    const token = jwt.sign(
+      {
+        id: user._id,
+        email: user.email,
+        role: user.role,
+      },
+      process.env.JWT_SECRET,
+      {
+        expiresIn: "7d",
+      }
+    );
+
+    res.json({ user, token });
+  } catch (err) {
+    console.log(err);
+
+    res.status(500).json({
+      error: "Login failed",
+    });
+  }
 });
 
 /* ===========================
    🛍 PRODUCTS
 =========================== */
+
+// Get all products
 app.get("/api/products", async (req, res) => {
-  const products = await Product.find();
-  res.json(products);
+  try {
+    const products = await Product.find().sort({
+      createdAt: -1,
+    });
+
+    res.json(products);
+  } catch (err) {
+    console.log(err);
+
+    res.status(500).json({
+      error: "Failed to fetch products",
+    });
+  }
+});
+
+// Get single product
+app.get("/api/products/:id", async (req, res) => {
+  try {
+    const product = await Product.findById(
+      req.params.id
+    );
+
+    if (!product) {
+      return res.status(404).json({
+        error: "Product not found",
+      });
+    }
+
+    res.json(product);
+  } catch (err) {
+    console.log(err);
+
+    res.status(500).json({
+      error: "Failed to fetch product",
+    });
+  }
+});
+
+// Create product
+app.post("/api/products", adminOnly, async (req, res) => {
+  try {
+    const {
+      name,
+      price,
+      images,
+      description,
+      stock,
+      vendorId,
+      vendorName,
+      category,
+    } = req.body;
+
+    const product = await Product.create({
+      name,
+      price,
+      images,
+      description,
+      stock,
+      vendorId,
+      vendorName,
+      category,
+    });
+
+    res.json(product);
+  } catch (err) {
+    console.log(err);
+
+    res.status(500).json({
+      error: "Failed to create product",
+    });
+  }
 });
 
 /* ===========================
    📦 ORDERS
 =========================== */
 app.post("/api/orders", auth, async (req, res) => {
-  const { items, amount } = req.body;
+  try {
+    const { items, amount } = req.body;
 
-  const order = await Order.create({
-    email: req.user.email,
-    items,
-    amount,
-    reference: "TX-" + Date.now()
-  });
+    const order = await Order.create({
+      email: req.user.email,
+      items,
+      amount,
+      reference: "TX-" + Date.now(),
+    });
 
-  res.json(order);
+    res.json(order);
+  } catch (err) {
+    console.log(err);
+
+    res.status(500).json({
+      error: "Order failed",
+    });
+  }
 });
 
 app.get("/api/orders/me", auth, async (req, res) => {
-  const orders = await Order.find({ email: req.user.email });
-  res.json(orders);
+  try {
+    const orders = await Order.find({
+      email: req.user.email,
+    });
+
+    res.json(orders);
+  } catch (err) {
+    console.log(err);
+
+    res.status(500).json({
+      error: "Failed to fetch orders",
+    });
+  }
 });
 
 /* ===========================
-   💳 PAYSTACK INIT
+   💳 PAYSTACK
 =========================== */
 app.post("/api/paystack/init", async (req, res) => {
-  const { email, amount, cart } = req.body;
+  try {
+    const { email, amount, cart } = req.body;
 
-  const reference = "TX-" + Date.now();
+    const reference = "TX-" + Date.now();
 
-  await Order.create({
-    email,
-    items: cart,
-    amount,
-    reference
-  });
-
-  const response = await axios.post(
-    "https://api.paystack.co/transaction/initialize",
-    {
+    await Order.create({
       email,
-      amount: amount * 100,
+      items: cart,
+      amount,
       reference,
-      callback_url: `${process.env.FRONTEND_URL}/success`
-    },
-    {
-      headers: {
-        Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}`
+    });
+
+    const response = await axios.post(
+      "https://api.paystack.co/transaction/initialize",
+      {
+        email,
+        amount: amount * 100,
+        reference,
+        callback_url: `${process.env.FRONTEND_URL}/success`,
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}`,
+        },
       }
-    }
-  );
-
-  res.json({ url: response.data.data.authorization_url });
-});
-
-/* ===========================
-   🔍 VERIFY PAYMENT
-=========================== */
-app.get("/api/paystack/verify/:ref", async (req, res) => {
-  const ref = req.params.ref;
-
-  const response = await axios.get(
-    `https://api.paystack.co/transaction/verify/${ref}`,
-    {
-      headers: {
-        Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}`
-      }
-    }
-  );
-
-  const data = response.data.data;
-
-  if (data.status === "success") {
-    await Order.findOneAndUpdate(
-      { reference: ref },
-      { status: "Paid" }
     );
-  }
 
-  res.json(data);
+    res.json({
+      url: response.data.data.authorization_url,
+    });
+  } catch (err) {
+    console.log(err);
+
+    res.status(500).json({
+      error: "Payment initialization failed",
+    });
+  }
 });
 
 /* ===========================
-   👑 ADMIN APIs
+   👑 ADMIN
 =========================== */
 app.get("/api/admin/stats", adminOnly, async (req, res) => {
-  const orders = await Order.find();
-  const users = await User.find();
-
-  const revenue = orders
-    .filter(o => o.status === "Paid")
-    .reduce((sum, o) => sum + o.amount, 0);
-
-  res.json({
-    totalOrders: orders.length,
-    totalUsers: users.length,
-    totalRevenue: revenue
-  });
-});
-
-app.get("/api/admin/orders", adminOnly, async (req, res) => {
-  const orders = await Order.find().sort({ createdAt: -1 });
-  res.json(orders);
-});
-
-app.put("/api/admin/orders/:id", adminOnly, async (req, res) => {
-  const { status, trackingNumber } = req.body;
-
-  const order = await Order.findByIdAndUpdate(
-    req.params.id,
-    { status, trackingNumber },
-    { new: true }
-  );
-
-  // 🔔 REAL-TIME EVENT
-  io.emit("orderUpdated", order);
-
-  res.json(order);
-});
-/* ===========================
-   📊 ANALYTICS DASHBOARD
-=========================== */
-app.get("/api/admin/analytics", adminOnly, async (req, res) => {
   try {
     const orders = await Order.find();
     const users = await User.find();
 
-    const totalRevenue = orders
-      .filter(o => o.status === "Paid")
+    const revenue = orders
+      .filter((o) => o.status === "Paid")
       .reduce((sum, o) => sum + o.amount, 0);
 
-    const totalOrders = orders.length;
-    const totalUsers = users.length;
-
-    // 📈 Revenue per day
-    const revenueByDate = {};
-
-    orders.forEach(order => {
-      const date = new Date(order.createdAt).toLocaleDateString();
-
-      if (!revenueByDate[date]) {
-        revenueByDate[date] = 0;
-      }
-
-      if (order.status === "Paid") {
-        revenueByDate[date] += order.amount;
-      }
-    });
-
     res.json({
-      totalRevenue,
-      totalOrders,
-      totalUsers,
-      revenueByDate
+      totalOrders: orders.length,
+      totalUsers: users.length,
+      totalRevenue: revenue,
     });
-
   } catch (err) {
-    res.status(500).json({ error: "Analytics failed" });
+    console.log(err);
+
+    res.status(500).json({
+      error: "Failed to fetch stats",
+    });
   }
 });
+
 /* ===========================
-   ⚡ SOCKET.IO (REAL-TIME)
+   ⚡ SOCKET.IO
 =========================== */
 const server = http.createServer(app);
-const io = new Server(server, {
-  cors: { origin: "*" }
-});
 
-const onlineUsers = new Map();
+const io = new Server(server, {
+  cors: {
+    origin: "*",
+  },
+});
 
 io.on("connection", (socket) => {
   console.log("⚡ Connected:", socket.id);
 
-  socket.on("register", (email) => {
-    onlineUsers.set(email, socket.id);
-  });
-
   socket.on("disconnect", () => {
-    for (let [email, id] of onlineUsers) {
-      if (id === socket.id) {
-        onlineUsers.delete(email);
-      }
-    }
+    console.log("❌ Disconnected:", socket.id);
   });
 });
 
@@ -338,5 +462,7 @@ io.on("connection", (socket) => {
 const PORT = process.env.PORT || 10000;
 
 server.listen(PORT, () => {
-  console.log("🚀 Server running on port " + PORT);
+  console.log(
+    `🚀 Server running on port ${PORT}`
+  );
 });
