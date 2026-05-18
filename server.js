@@ -22,8 +22,12 @@ app.use(express.json());
 =========================== */
 mongoose
   .connect(process.env.MONGO_URI)
-  .then(() => console.log("✅ MongoDB Connected"))
-  .catch((err) => console.log(err));
+  .then(() => {
+    console.log("✅ MongoDB Connected");
+  })
+  .catch((err) => {
+    console.log("❌ MongoDB Error:", err);
+  });
 
 /* ===========================
    👤 MODELS
@@ -31,11 +35,31 @@ mongoose
 const User = mongoose.model(
   "User",
   new mongoose.Schema({
-    name: String,
-    email: String,
-    password: String,
-    role: { type: String, default: "customer" },
-    createdAt: { type: Date, default: Date.now },
+    name: {
+      type: String,
+      required: true,
+    },
+
+    email: {
+      type: String,
+      required: true,
+      unique: true,
+    },
+
+    password: {
+      type: String,
+      required: true,
+    },
+
+    role: {
+      type: String,
+      default: "customer",
+    },
+
+    createdAt: {
+      type: Date,
+      default: Date.now,
+    },
   })
 );
 
@@ -43,20 +67,34 @@ const Product = mongoose.model(
   "Product",
   new mongoose.Schema({
     name: String,
+
     price: Number,
+
     images: [String],
+
     description: String,
+
     stock: Number,
+
     vendorId: String,
+
     vendorName: String,
+
     category: String,
-    rating: { type: Number, default: 0 },
+
+    rating: {
+      type: Number,
+      default: 0,
+    },
 
     reviews: [
       {
         user: String,
+
         comment: String,
+
         stars: Number,
+
         createdAt: {
           type: Date,
           default: Date.now,
@@ -75,13 +113,18 @@ const Order = mongoose.model(
   "Order",
   new mongoose.Schema({
     email: String,
+
     items: Array,
+
     amount: Number,
+
     status: {
       type: String,
       default: "Pending",
     },
+
     reference: String,
+
     trackingNumber: String,
 
     createdAt: {
@@ -95,7 +138,9 @@ const Order = mongoose.model(
    🔐 AUTH MIDDLEWARE
 =========================== */
 function auth(req, res, next) {
-  const token = req.headers.authorization?.split(" ")[1];
+
+  const token =
+    req.headers.authorization?.split(" ")[1];
 
   if (!token) {
     return res.status(401).json({
@@ -104,6 +149,7 @@ function auth(req, res, next) {
   }
 
   try {
+
     const decoded = jwt.verify(
       token,
       process.env.JWT_SECRET
@@ -112,15 +158,20 @@ function auth(req, res, next) {
     req.user = decoded;
 
     next();
-  } catch {
+
+  } catch (err) {
+
     return res.status(401).json({
       error: "Invalid token",
     });
+
   }
 }
 
 function adminOnly(req, res, next) {
-  const token = req.headers.authorization?.split(" ")[1];
+
+  const token =
+    req.headers.authorization?.split(" ")[1];
 
   if (!token) {
     return res.status(401).json({
@@ -129,24 +180,30 @@ function adminOnly(req, res, next) {
   }
 
   try {
+
     const decoded = jwt.verify(
       token,
       process.env.JWT_SECRET
     );
 
     if (decoded.role !== "admin") {
+
       return res.status(403).json({
         error: "Admin only",
       });
+
     }
 
     req.user = decoded;
 
     next();
-  } catch {
+
+  } catch (err) {
+
     return res.status(401).json({
       error: "Invalid token",
     });
+
   }
 }
 
@@ -154,32 +211,50 @@ function adminOnly(req, res, next) {
    🏠 ROOT
 =========================== */
 app.get("/", (req, res) => {
+
   res.json({
     status: "TechMart Enterprise API 🚀",
   });
+
 });
 
 /* ===========================
    🔐 AUTH ROUTES
 =========================== */
+
+/* SIGNUP */
 app.post("/api/auth/signup", async (req, res) => {
+
   try {
+
     const { name, email, password } = req.body;
 
-    const exists = await User.findOne({ email });
+    if (!name || !email || !password) {
 
-    if (exists) {
       return res.status(400).json({
-        error: "User exists",
+        error: "All fields are required",
       });
+
     }
 
-    const hashed = await bcrypt.hash(password, 10);
+    const existingUser =
+      await User.findOne({ email });
+
+    if (existingUser) {
+
+      return res.status(400).json({
+        error: "User already exists",
+      });
+
+    }
+
+    const hashedPassword =
+      await bcrypt.hash(password, 10);
 
     const user = await User.create({
       name,
       email,
-      password: hashed,
+      password: hashedPassword,
     });
 
     const token = jwt.sign(
@@ -194,37 +269,68 @@ app.post("/api/auth/signup", async (req, res) => {
       }
     );
 
-    res.json({ user, token });
+    res.status(201).json({
+      success: true,
+
+      token,
+
+      user: {
+        _id: user._id,
+        name: user.name,
+        email: user.email,
+        role: user.role,
+      },
+    });
+
   } catch (err) {
-    console.log(err);
+
+    console.log("❌ Signup Error:", err);
 
     res.status(500).json({
       error: "Signup failed",
     });
+
   }
 });
 
+/* LOGIN */
 app.post("/api/auth/login", async (req, res) => {
+
   try {
+
     const { email, password } = req.body;
 
-    const user = await User.findOne({ email });
+    if (!email || !password) {
+
+      return res.status(400).json({
+        error: "Email and password required",
+      });
+
+    }
+
+    const user =
+      await User.findOne({ email });
 
     if (!user) {
+
       return res.status(400).json({
         error: "User not found",
       });
+
     }
 
-    const match = await bcrypt.compare(
-      password,
-      user.password
-    );
+    const match =
+      await bcrypt.compare(
+        password,
+        user.password
+      );
 
     if (!match) {
+
       return res.status(400).json({
         error: "Wrong password",
       });
+
     }
 
     const token = jwt.sign(
@@ -239,13 +345,27 @@ app.post("/api/auth/login", async (req, res) => {
       }
     );
 
-    res.json({ user, token });
+    res.json({
+      success: true,
+
+      token,
+
+      user: {
+        _id: user._id,
+        name: user.name,
+        email: user.email,
+        role: user.role,
+      },
+    });
+
   } catch (err) {
-    console.log(err);
+
+    console.log("❌ Login Error:", err);
 
     res.status(500).json({
       error: "Login failed",
     });
+
   }
 });
 
@@ -253,118 +373,137 @@ app.post("/api/auth/login", async (req, res) => {
    🛍 PRODUCTS
 =========================== */
 
-// Get all products
+/* GET ALL PRODUCTS */
 app.get("/api/products", async (req, res) => {
+
   try {
-    const products = await Product.find().sort({
-      createdAt: -1,
-    });
+
+    const products =
+      await Product.find().sort({
+        createdAt: -1,
+      });
 
     res.json(products);
+
   } catch (err) {
+
     console.log(err);
 
     res.status(500).json({
       error: "Failed to fetch products",
     });
+
   }
 });
 
-// Get single product
+/* GET SINGLE PRODUCT */
 app.get("/api/products/:id", async (req, res) => {
+
   try {
-    const product = await Product.findById(
-      req.params.id
-    );
+
+    const product =
+      await Product.findById(
+        req.params.id
+      );
 
     if (!product) {
+
       return res.status(404).json({
         error: "Product not found",
       });
+
     }
 
     res.json(product);
+
   } catch (err) {
+
     console.log(err);
 
     res.status(500).json({
       error: "Failed to fetch product",
     });
+
   }
 });
 
-// Create product
-app.post("/api/products", adminOnly, async (req, res) => {
-  try {
-    const {
-      name,
-      price,
-      images,
-      description,
-      stock,
-      vendorId,
-      vendorName,
-      category,
-    } = req.body;
+/* CREATE PRODUCT */
+app.post(
+  "/api/products",
+  adminOnly,
+  async (req, res) => {
 
-    const product = await Product.create({
-      name,
-      price,
-      images,
-      description,
-      stock,
-      vendorId,
-      vendorName,
-      category,
-    });
+    try {
 
-    res.json(product);
-  } catch (err) {
-    console.log(err);
+      const product =
+        await Product.create(req.body);
 
-    res.status(500).json({
-      error: "Failed to create product",
-    });
+      res.json(product);
+
+    } catch (err) {
+
+      console.log(err);
+
+      res.status(500).json({
+        error: "Failed to create product",
+      });
+
+    }
   }
-});
+);
 
 /* ===========================
    📦 ORDERS
 =========================== */
+
+/* CREATE ORDER */
 app.post("/api/orders", auth, async (req, res) => {
+
   try {
+
     const { items, amount } = req.body;
 
-    const order = await Order.create({
-      email: req.user.email,
-      items,
-      amount,
-      reference: "TX-" + Date.now(),
-    });
+    const order =
+      await Order.create({
+        email: req.user.email,
+        items,
+        amount,
+        reference: "TX-" + Date.now(),
+      });
 
     res.json(order);
+
   } catch (err) {
+
     console.log(err);
 
     res.status(500).json({
       error: "Order failed",
     });
+
   }
 });
 
+/* USER ORDERS */
 app.get("/api/orders/me", auth, async (req, res) => {
+
   try {
-    const orders = await Order.find({
-      email: req.user.email,
-    });
+
+    const orders =
+      await Order.find({
+        email: req.user.email,
+      });
 
     res.json(orders);
+
   } catch (err) {
+
     console.log(err);
 
     res.status(500).json({
       error: "Failed to fetch orders",
     });
+
   }
 });
 
@@ -372,16 +511,32 @@ app.get("/api/orders/me", auth, async (req, res) => {
    💳 PAYSTACK
 =========================== */
 app.post("/api/paystack/init", async (req, res) => {
-  try {
-    const { email, amount, cart } = req.body;
 
-    const reference = "TX-" + Date.now();
+  try {
+
+    const {
+      email,
+      amount,
+      cart,
+    } = req.body;
+
+    if (!email || !amount) {
+
+      return res.status(400).json({
+        error: "Missing payment info",
+      });
+
+    }
+
+    const reference =
+      "TX-" + Date.now();
 
     await Order.create({
       email,
       items: cart,
       amount,
       reference,
+      status: "Pending",
     });
 
     const response = await axios.post(
@@ -390,57 +545,86 @@ app.post("/api/paystack/init", async (req, res) => {
         email,
         amount: amount * 100,
         reference,
-        callback_url: `${process.env.FRONTEND_URL}/success`,
+        callback_url:
+          `${process.env.FRONTEND_URL}/success`,
       },
       {
         headers: {
-          Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}`,
+          Authorization:
+            `Bearer ${process.env.PAYSTACK_SECRET_KEY}`,
+          "Content-Type":
+            "application/json",
         },
       }
     );
 
     res.json({
-      url: response.data.data.authorization_url,
+      url:
+        response.data.data.authorization_url,
     });
+
   } catch (err) {
-    console.log(err);
+
+    console.log(
+      "❌ PAYSTACK ERROR:",
+      err.response?.data || err.message
+    );
 
     res.status(500).json({
       error: "Payment initialization failed",
     });
+
   }
 });
 
 /* ===========================
    👑 ADMIN
 =========================== */
-app.get("/api/admin/stats", adminOnly, async (req, res) => {
-  try {
-    const orders = await Order.find();
-    const users = await User.find();
+app.get(
+  "/api/admin/stats",
+  adminOnly,
+  async (req, res) => {
 
-    const revenue = orders
-      .filter((o) => o.status === "Paid")
-      .reduce((sum, o) => sum + o.amount, 0);
+    try {
 
-    res.json({
-      totalOrders: orders.length,
-      totalUsers: users.length,
-      totalRevenue: revenue,
-    });
-  } catch (err) {
-    console.log(err);
+      const orders =
+        await Order.find();
 
-    res.status(500).json({
-      error: "Failed to fetch stats",
-    });
+      const users =
+        await User.find();
+
+      const revenue = orders
+        .filter(
+          (o) => o.status === "Paid"
+        )
+        .reduce(
+          (sum, o) => sum + o.amount,
+          0
+        );
+
+      res.json({
+        totalOrders: orders.length,
+        totalUsers: users.length,
+        totalRevenue: revenue,
+      });
+
+    } catch (err) {
+
+      console.log(err);
+
+      res.status(500).json({
+        error: "Failed to fetch stats",
+      });
+
+    }
   }
-});
+);
 
 /* ===========================
    ⚡ SOCKET.IO
 =========================== */
-const server = http.createServer(app);
+const server =
+  http.createServer(app);
 
 const io = new Server(server, {
   cors: {
@@ -449,20 +633,32 @@ const io = new Server(server, {
 });
 
 io.on("connection", (socket) => {
-  console.log("⚡ Connected:", socket.id);
+
+  console.log(
+    "⚡ Connected:",
+    socket.id
+  );
 
   socket.on("disconnect", () => {
-    console.log("❌ Disconnected:", socket.id);
+
+    console.log(
+      "❌ Disconnected:",
+      socket.id
+    );
+
   });
 });
 
 /* ===========================
    🚀 START SERVER
 =========================== */
-const PORT = process.env.PORT || 10000;
+const PORT =
+  process.env.PORT || 10000;
 
 server.listen(PORT, () => {
+
   console.log(
     `🚀 Server running on port ${PORT}`
   );
+
 });
