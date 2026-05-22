@@ -12,9 +12,32 @@ const { Server } = require("socket.io");
 const app = express();
 
 /* ===========================
-   🌐 MIDDLEWARE
+   🌐 CORS CONFIG (FIXED)
 =========================== */
-app.use(cors({ origin: process.env.FRONTEND_URL || "*" }));
+
+const allowedOrigins = [
+  "http://localhost:3000",
+  "http://localhost:5173",
+  "https://techmart-frontend.onrender.com"
+];
+
+app.use(cors({
+  origin: function (origin, callback) {
+    if (!origin) return callback(null, true);
+
+    if (allowedOrigins.includes(origin)) {
+      return callback(null, true);
+    }
+
+    return callback(new Error("CORS blocked: " + origin));
+  },
+  credentials: true,
+  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization"]
+}));
+
+app.options("*", cors());
+
 app.use(express.json());
 
 /* ===========================
@@ -120,6 +143,7 @@ app.get("/", (req, res) => {
 app.post("/api/auth/signup", async (req, res) => {
   try {
     const { name, email, password } = req.body;
+
     if (!name || !email || !password)
       return res.status(400).json({ error: "All fields required" });
 
@@ -127,7 +151,12 @@ app.post("/api/auth/signup", async (req, res) => {
       return res.status(400).json({ error: "User already exists" });
 
     const hashedPassword = await bcrypt.hash(password, 10);
-    const user = await User.create({ name, email, password: hashedPassword });
+
+    const user = await User.create({
+      name,
+      email,
+      password: hashedPassword
+    });
 
     const token = jwt.sign(
       { id: user._id, email: user.email, role: user.role },
@@ -137,7 +166,7 @@ app.post("/api/auth/signup", async (req, res) => {
 
     res.status(201).json({ success: true, token, user });
   } catch (err) {
-    console.error("❌ Signup Error:", err);
+    console.error(err);
     res.status(500).json({ error: "Signup failed" });
   }
 });
@@ -145,8 +174,6 @@ app.post("/api/auth/signup", async (req, res) => {
 app.post("/api/auth/login", async (req, res) => {
   try {
     const { email, password } = req.body;
-    if (!email || !password)
-      return res.status(400).json({ error: "Email and password required" });
 
     const user = await User.findOne({ email });
     if (!user) return res.status(400).json({ error: "User not found" });
@@ -162,7 +189,7 @@ app.post("/api/auth/login", async (req, res) => {
 
     res.json({ success: true, token, user });
   } catch (err) {
-    console.error("❌ Login Error:", err);
+    console.error(err);
     res.status(500).json({ error: "Login failed" });
   }
 });
@@ -171,63 +198,40 @@ app.post("/api/auth/login", async (req, res) => {
    🛍 PRODUCTS
 =========================== */
 app.get("/api/products", async (req, res) => {
-  try {
-    const products = await Product.find().sort({ createdAt: -1 });
-    res.json(products);
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "Failed to fetch products" });
-  }
+  const products = await Product.find().sort({ createdAt: -1 });
+  res.json(products);
 });
 
 app.get("/api/products/:id", async (req, res) => {
-  try {
-    const product = await Product.findById(req.params.id);
-    if (!product) return res.status(404).json({ error: "Product not found" });
-    res.json(product);
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "Failed to fetch product" });
-  }
+  const product = await Product.findById(req.params.id);
+  if (!product) return res.status(404).json({ error: "Not found" });
+  res.json(product);
 });
 
 app.post("/api/products", adminOnly, async (req, res) => {
-  try {
-    const product = await Product.create(req.body);
-    res.json(product);
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "Failed to create product" });
-  }
+  const product = await Product.create(req.body);
+  res.json(product);
 });
 
 /* ===========================
    📦 ORDERS
 =========================== */
 app.post("/api/orders", auth, async (req, res) => {
-  try {
-    const { items, amount } = req.body;
-    const order = await Order.create({
-      email: req.user.email,
-      items,
-      amount,
-      reference: "TX-" + Date.now(),
-    });
-    res.json(order);
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "Order failed" });
-  }
+  const { items, amount } = req.body;
+
+  const order = await Order.create({
+    email: req.user.email,
+    items,
+    amount,
+    reference: "TX-" + Date.now()
+  });
+
+  res.json(order);
 });
 
 app.get("/api/orders/me", auth, async (req, res) => {
-  try {
-    const orders = await Order.find({ email: req.user.email });
-    res.json(orders);
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "Failed to fetch orders" });
-  }
+  const orders = await Order.find({ email: req.user.email });
+  res.json(orders);
 });
 
 /* ===========================
@@ -236,8 +240,6 @@ app.get("/api/orders/me", auth, async (req, res) => {
 app.post("/api/paystack/init", async (req, res) => {
   try {
     const { email, amount, cart } = req.body;
-    if (!email || !amount)
-      return res.status(400).json({ error: "Missing payment info" });
 
     const reference = "TX-" + Date.now();
 
@@ -246,7 +248,7 @@ app.post("/api/paystack/init", async (req, res) => {
       items: cart,
       amount,
       reference,
-      status: "Pending",
+      status: "Pending"
     });
 
     const response = await axios.post(
@@ -255,20 +257,20 @@ app.post("/api/paystack/init", async (req, res) => {
         email,
         amount: amount * 100,
         reference,
-        callback_url: `${process.env.FRONTEND_URL}/success`,
+        callback_url: `${process.env.FRONTEND_URL}/success`
       },
       {
         headers: {
           Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}`,
-          "Content-Type": "application/json",
-        },
+          "Content-Type": "application/json"
+        }
       }
     );
 
     res.json({ url: response.data.data.authorization_url });
   } catch (err) {
-    console.error("❌ PAYSTACK ERROR:", err.response?.data || err.message);
-    res.status(500).json({ error: "Payment initialization failed" });
+    console.error("PAYSTACK ERROR:", err.response?.data || err.message);
+    res.status(500).json({ error: "Payment failed" });
   }
 });
 
@@ -276,37 +278,46 @@ app.post("/api/paystack/init", async (req, res) => {
    👑 ADMIN
 =========================== */
 app.get("/api/admin/stats", adminOnly, async (req, res) => {
-  try {
-    const orders = await Order.find();
-    const users = await User.find();
-    const revenue = orders
-      .filter((o) => o.status === "Paid")
-      .reduce((sum, o) => sum + o.amount, 0);
+  const orders = await Order.find();
+  const users = await User.find();
 
-    res.json({
-      totalOrders: orders.length,
-      totalUsers: users.length,
-      totalRevenue: revenue,
-    });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "Failed to fetch stats" });
-  }
+  const revenue = orders
+    .filter((o) => o.status === "Paid")
+    .reduce((sum, o) => sum + o.amount, 0);
+
+  res.json({
+    totalOrders: orders.length,
+    totalUsers: users.length,
+    totalRevenue: revenue
+  });
 });
 
 /* ===========================
    ⚡ SOCKET.IO
 =========================== */
 const server = http.createServer(app);
-const io = new Server(server, { cors: { origin: process.env.FRONTEND_URL || "*" } });
+
+const io = new Server(server, {
+  cors: {
+    origin: allowedOrigins,
+    methods: ["GET", "POST"],
+    credentials: true
+  }
+});
 
 io.on("connection", (socket) => {
   console.log("⚡ Connected:", socket.id);
-  socket.on("disconnect", () => console.log("❌ Disconnected:", socket.id));
+
+  socket.on("disconnect", () => {
+    console.log("❌ Disconnected:", socket.id);
+  });
 });
 
 /* ===========================
    🚀 START SERVER
 =========================== */
 const PORT = process.env.PORT || 5002;
-server.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
+
+server.listen(PORT, () =>
+  console.log(`🚀 Server running on port ${PORT}`)
+);

@@ -13,36 +13,23 @@ const IORedis = require("ioredis");
 const connection = new IORedis(process.env.REDIS_URL, {
   maxRetriesPerRequest: null,
   enableReadyCheck: false,
-  lazyConnect: true,
-  keepAlive: 30000,
-
-  reconnectOnError(err) {
-    const targetErrors = ["ECONNRESET", "ETIMEDOUT"];
-
-    if (targetErrors.includes(err.code)) {
-      return true;
-    }
-
-    return false;
+  tls: {},
+  retryStrategy(times) {
+    return Math.min(times * 1000, 5000);
   },
 });
 
-let hasConnected = false;
+let redisConnected = false;
 
 connection.on("connect", () => {
-  if (!hasConnected) {
+  if (!redisConnected) {
     console.log("✅ Worker Redis Connected");
-    hasConnected = true;
+    redisConnected = true;
   }
 });
 
 connection.on("error", (err) => {
-  if (
-    err.code !== "ECONNRESET" &&
-    err.code !== "ETIMEDOUT"
-  ) {
-    console.error("❌ Redis Error:", err.message);
-  }
+  console.log("❌ Redis Error:", err.message);
 });
 
 /* ===========================
@@ -55,7 +42,7 @@ mongoose
     console.log("✅ Worker MongoDB Connected");
   })
   .catch((err) => {
-    console.log("❌ Mongo Error:", err);
+    console.log("❌ Mongo Error:", err.message);
   });
 
 /* ===========================
@@ -78,6 +65,8 @@ const Order = mongoose.model(
 
     reference: String,
 
+    trackingNumber: String,
+
     createdAt: {
       type: Date,
       default: Date.now,
@@ -91,7 +80,6 @@ const Order = mongoose.model(
 
 const transporter = nodemailer.createTransport({
   service: "gmail",
-
   auth: {
     user: process.env.EMAIL_USER,
     pass: process.env.EMAIL_PASS,
@@ -118,69 +106,52 @@ const worker = new Worker(
       }
 
       /* ===========================
-         ⏳ PROCESSING DELAY
-      =========================== */
-
-      await new Promise((resolve) =>
-        setTimeout(resolve, 1000)
-      );
-
-      /* ===========================
          📧 SEND EMAIL
       =========================== */
 
       try {
         await transporter.sendMail({
           from: `TechMart <${process.env.EMAIL_USER}>`,
-
           to: order.email,
-
           subject: "🛒 Order Confirmation",
-
           html: `
-            <h2>Order Confirmed ✅</h2>
+            <h2>Order Confirmed</h2>
 
             <p>Your order has been received successfully.</p>
 
             <p><strong>Reference:</strong> ${order.reference}</p>
 
-            <p><strong>Status:</strong> ${order.status}</p>
+            <p><strong>Amount:</strong> ₦${order.amount}</p>
 
-            <p><strong>Total:</strong> ₦${order.amount}</p>
+            <p><strong>Status:</strong> ${order.status}</p>
 
             <p>Thank you for shopping with TechMart 🚀</p>
           `,
         });
 
-        console.log("✅ Email sent");
-      } catch (err) {
+        console.log("✅ Confirmation email sent");
+      } catch (emailErr) {
         console.log(
-          "❌ Email failed:",
-          err.message
+          "❌ Email Error:",
+          emailErr.message
         );
-
-        throw err;
       }
 
       /* ===========================
          🤖 OPTIONAL AI SERVICE
       =========================== */
 
-      if (
-        process.env.AI_SERVICE_URL &&
-        process.env.AI_SERVICE_URL !==
-          "https://your-ai-service.com/analyze-order"
-      ) {
+      if (process.env.AI_SERVICE_URL) {
         try {
           await axios.post(
             process.env.AI_SERVICE_URL,
             order
           );
 
-          console.log("🤖 AI processed");
-        } catch (err) {
+          console.log("🤖 AI processed order");
+        } catch (aiErr) {
           console.log(
-            "⚠️ AI service unavailable"
+            "⚠️ AI service skipped"
           );
         }
       }
@@ -192,8 +163,8 @@ const worker = new Worker(
 
       return true;
     } catch (err) {
-      console.error(
-        "❌ Worker processing error:",
+      console.log(
+        "❌ Worker Processing Error:",
         err.message
       );
 
@@ -206,7 +177,13 @@ const worker = new Worker(
 
     concurrency: 5,
 
-    autorun: true,
+    removeOnComplete: {
+      count: 100,
+    },
+
+    removeOnFail: {
+      count: 50,
+    },
   }
 );
 
@@ -216,29 +193,27 @@ const worker = new Worker(
 
 worker.on("completed", (job) => {
   console.log(
-    "✅ Job completed:",
-    job.id
+    `✅ Job completed: ${job.id}`
   );
 });
 
 worker.on("failed", (job, err) => {
-  console.error(
-    "❌ Job failed:",
-    job?.id,
-    err.message
+  console.log(
+    `❌ Job failed: ${job?.id} - ${err.message}`
   );
 });
 
 worker.on("error", (err) => {
   if (
-    err.code !== "ECONNRESET" &&
-    err.code !== "ETIMEDOUT"
+    err.message.includes("Connection is closed")
   ) {
-    console.error(
-      "🚨 Worker error:",
-      err.message
-    );
+    return;
   }
+
+  console.log(
+    "🚨 Worker error:",
+    err.message
+  );
 });
 
 /* ===========================
