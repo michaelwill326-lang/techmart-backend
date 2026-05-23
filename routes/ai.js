@@ -1,10 +1,10 @@
 const express = require("express");
 const router = express.Router();
-const OpenAI = require("openai");
+const Groq = require("groq-sdk");
 const mongoose = require("mongoose");
 
-const client = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
+const client = new Groq({
+  apiKey: process.env.GROQ_API_KEY,
 });
 
 /* ===========================
@@ -24,8 +24,6 @@ router.post("/chat", async (req, res) => {
 
     /* ===========================
        GET PRODUCT MODEL
-       (must be done AFTER mongoose
-       connects in server.js)
     =========================== */
     const Product = mongoose.models.Product;
 
@@ -60,10 +58,10 @@ Stock: ${p.stock}
       .join("\n");
 
     /* ===========================
-       OPENAI REQUEST
+       GROQ REQUEST
     =========================== */
     const completion = await client.chat.completions.create({
-      model: "gpt-4o-mini",
+      model: "llama3-8b-8192",
 
       messages: [
         {
@@ -116,14 +114,14 @@ ${productContext
     if (err?.status === 401) {
       return res.status(500).json({
         error: "AI chat failed",
-        details: "Invalid OpenAI API key"
+        details: "Invalid Groq API key"
       });
     }
 
     if (err?.status === 429) {
       return res.status(500).json({
         error: "AI chat failed",
-        details: "OpenAI rate limit or quota exceeded — check billing at platform.openai.com"
+        details: "Groq rate limit exceeded — try again in a moment"
       });
     }
 
