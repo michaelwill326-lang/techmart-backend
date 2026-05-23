@@ -22,11 +22,9 @@ router.post("/chat", async (req, res) => {
     const { message } = req.body;
 
     if (!message) {
-
       return res.status(400).json({
         error: "Message required",
       });
-
     }
 
     /* ===========================
@@ -34,24 +32,9 @@ router.post("/chat", async (req, res) => {
     =========================== */
     const products = await Product.find({
       $or: [
-        {
-          name: {
-            $regex: message,
-            $options: "i",
-          },
-        },
-        {
-          description: {
-            $regex: message,
-            $options: "i",
-          },
-        },
-        {
-          category: {
-            $regex: message,
-            $options: "i",
-          },
-        },
+        { name: { $regex: message, $options: "i" } },
+        { description: { $regex: message, $options: "i" } },
+        { category: { $regex: message, $options: "i" } },
       ],
     }).limit(5);
 
@@ -59,7 +42,7 @@ router.post("/chat", async (req, res) => {
       .map(
         (p) => `
 Name: ${p.name}
-Price: $${p.price}
+Price: ₦${p.price?.toLocaleString()}
 Description: ${p.description}
 Category: ${p.category}
 Stock: ${p.stock}
@@ -70,41 +53,47 @@ Stock: ${p.stock}
     /* ===========================
        OPENAI REQUEST
     =========================== */
-    const completion =
-      await client.chat.completions.create({
+    const completion = await client.chat.completions.create({
+      model: "gpt-4o-mini",
 
-        model: "gpt-4o-mini",
-
-        messages: [
-          {
-            role: "system",
-
-            content: `
-You are TechMart AI assistant.
+      messages: [
+        {
+          role: "system",
+          content: `
+You are TechMart AI, a friendly and professional shopping assistant for a Nigerian tech store.
 
 Your job:
-- help customers shop
-- recommend products
-- answer questions
-- be friendly and professional
-- encourage purchases
+- Help customers find products
+- Recommend products based on their needs
+- Answer questions about products, pricing, and availability
+- Be friendly, concise, and encouraging
+- Always respond in plain text, no markdown
+- Prices are in Nigerian Naira (₦)
 
-Available products:
-${productContext}
+${productContext
+  ? `Available matching products:\n${productContext}`
+  : "No specific products matched the query. Suggest the customer browse the store or ask about a specific category."
+}
 `,
-          },
+        },
+        {
+          role: "user",
+          content: message,
+        },
+      ],
 
-          {
-            role: "user",
-            content: message,
-          },
-        ],
+      max_tokens: 500,
+      temperature: 0.7,
+    });
 
-        temperature: 0.7,
+    const reply = completion.choices[0]?.message?.content;
+
+    if (!reply) {
+      return res.status(500).json({
+        error: "AI returned empty response",
+        details: "No content in completion choices"
       });
-
-    const reply =
-      completion.choices[0].message.content;
+    }
 
     res.json({
       reply,
@@ -113,10 +102,33 @@ ${productContext}
 
   } catch (err) {
 
-    console.log("AI ERROR:", err);
+    console.error("AI ERROR:", err);
+
+    /* OPENAI SPECIFIC ERRORS */
+    if (err?.status === 401) {
+      return res.status(500).json({
+        error: "AI chat failed",
+        details: "Invalid OpenAI API key"
+      });
+    }
+
+    if (err?.status === 429) {
+      return res.status(500).json({
+        error: "AI chat failed",
+        details: "OpenAI rate limit or quota exceeded"
+      });
+    }
+
+    if (err?.status === insufficient_quota) {
+      return res.status(500).json({
+        error: "AI chat failed",
+        details: "OpenAI quota exceeded — check billing"
+      });
+    }
 
     res.status(500).json({
       error: "AI chat failed",
+      details: err.message
     });
 
   }
