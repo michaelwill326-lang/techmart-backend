@@ -8,11 +8,6 @@ const client = new OpenAI({
 });
 
 /* ===========================
-   USE EXISTING PRODUCT MODEL
-=========================== */
-const Product = mongoose.models.Product;
-
-/* ===========================
    AI CHAT ROUTE
 =========================== */
 router.post("/chat", async (req, res) => {
@@ -24,6 +19,20 @@ router.post("/chat", async (req, res) => {
     if (!message) {
       return res.status(400).json({
         error: "Message required",
+      });
+    }
+
+    /* ===========================
+       GET PRODUCT MODEL
+       (must be done AFTER mongoose
+       connects in server.js)
+    =========================== */
+    const Product = mongoose.models.Product;
+
+    if (!Product) {
+      return res.status(500).json({
+        error: "AI chat failed",
+        details: "Product model not loaded yet"
       });
     }
 
@@ -65,7 +74,7 @@ You are TechMart AI, a friendly and professional shopping assistant for a Nigeri
 Your job:
 - Help customers find products
 - Recommend products based on their needs
-- Answer questions about products, pricing, and availability
+- Answer questions about products, pricing and availability
 - Be friendly, concise, and encouraging
 - Always respond in plain text, no markdown
 - Prices are in Nigerian Naira (₦)
@@ -104,7 +113,6 @@ ${productContext
 
     console.error("AI ERROR:", err);
 
-    /* OPENAI SPECIFIC ERRORS */
     if (err?.status === 401) {
       return res.status(500).json({
         error: "AI chat failed",
@@ -115,14 +123,7 @@ ${productContext
     if (err?.status === 429) {
       return res.status(500).json({
         error: "AI chat failed",
-        details: "OpenAI rate limit or quota exceeded"
-      });
-    }
-
-    if (err?.status === insufficient_quota) {
-      return res.status(500).json({
-        error: "AI chat failed",
-        details: "OpenAI quota exceeded — check billing"
+        details: "OpenAI rate limit or quota exceeded — check billing at platform.openai.com"
       });
     }
 
