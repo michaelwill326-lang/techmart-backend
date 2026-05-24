@@ -455,7 +455,73 @@ app.get("/api/admin/analytics", adminOnly, async (req, res) => {
     res.status(500).json({ error: "Failed to fetch analytics" });
   }
 });
+/* ===========================
+   ⭐ REVIEWS
+=========================== */
 
+/* ADD REVIEW */
+app.post("/api/products/:id/review", auth, async (req, res) => {
+  try {
+    const { comment, stars } = req.body;
+
+    if (!comment || !stars) {
+      return res.status(400).json({ error: "Comment and stars required" });
+    }
+
+    const product = await Product.findById(req.params.id);
+
+    if (!product) {
+      return res.status(404).json({ error: "Product not found" });
+    }
+
+    // Check if user already reviewed
+    const alreadyReviewed = product.reviews.find(
+      (r) => r.user === req.user.email
+    );
+
+    if (alreadyReviewed) {
+      return res.status(400).json({ error: "You already reviewed this product" });
+    }
+
+    const review = {
+      user: req.user.email,
+      comment,
+      stars: Number(stars),
+      createdAt: new Date(),
+    };
+
+    product.reviews.push(review);
+
+    // Update average rating
+    product.rating = (
+      product.reviews.reduce((sum, r) => sum + r.stars, 0) /
+      product.reviews.length
+    ).toFixed(1);
+
+    await product.save();
+
+    res.json({ success: true, product });
+
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Failed to submit review" });
+  }
+});
+
+/* DELETE REVIEW (admin) */
+app.delete("/api/products/:id/review/:reviewId", adminOnly, async (req, res) => {
+  try {
+    const product = await Product.findById(req.params.id);
+    product.reviews = product.reviews.filter(
+      (r) => r._id.toString() !== req.params.reviewId
+    );
+    await product.save();
+    res.json({ success: true });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Failed to delete review" });
+  }
+});
 /* ===========================
    📦 TRACKING
 =========================== */
