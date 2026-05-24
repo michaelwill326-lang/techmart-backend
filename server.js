@@ -455,6 +455,63 @@ app.get("/api/admin/analytics", adminOnly, async (req, res) => {
     res.status(500).json({ error: "Failed to fetch analytics" });
   }
 });
+
+/* ===========================
+   📦 TRACKING
+=========================== */
+
+/* GET ORDER BY REFERENCE */
+app.get("/api/orders/track/:reference", async (req, res) => {
+  try {
+    const order = await Order.findOne({
+      reference: req.params.reference
+    });
+    if (!order) {
+      return res.status(404).json({ error: "Order not found" });
+    }
+    res.json(order);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Failed to track order" });
+  }
+});
+
+/* GET MY ORDERS */
+app.get("/api/orders/my", auth, async (req, res) => {
+  try {
+    const orders = await Order.find({
+      email: req.user.email
+    }).sort({ createdAt: -1 });
+    res.json(orders);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Failed to fetch orders" });
+  }
+});
+
+/* UPDATE TRACKING (admin) */
+app.put("/api/orders/:id/tracking", adminOnly, async (req, res) => {
+  try {
+    const { trackingNumber, status } = req.body;
+    const order = await Order.findByIdAndUpdate(
+      req.params.id,
+      { trackingNumber, status },
+      { new: true }
+    );
+    
+    // Emit socket event to notify customer
+    io.emit("orderUpdated", {
+      orderId: order._id,
+      status: order.status,
+      trackingNumber: order.trackingNumber
+    });
+
+    res.json(order);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Failed to update tracking" });
+  }
+});
 /* ===========================
    ⚡ SOCKET.IO
 =========================== */
