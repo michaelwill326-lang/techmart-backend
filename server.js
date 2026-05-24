@@ -346,7 +346,7 @@ app.get("/api/admin/stats", adminOnly, async (req, res) => {
     const users = await User.find();
     const revenue = orders
       .filter((o) => o.status !== "Cancelled" && o.status !== "Pending")
-      .reduce((sum, o) => sum + o.amount, 0);
+      .reduce((sum, o) => sum + (o.amount || 0), 0);
     res.json({
       totalOrders: orders.length,
       totalUsers: users.length,
@@ -433,7 +433,7 @@ app.get("/api/admin/analytics", adminOnly, async (req, res) => {
 
     const revenue = orders
       .filter((o) => o.status !== "Cancelled" && o.status !== "Pending")
-      .reduce((sum, o) => sum + o.amount, 0);
+      .reduce((sum, o) => sum + (o.amount || 0), 0);
 
     const revenueByDate = {};
     orders
