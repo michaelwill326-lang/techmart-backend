@@ -484,6 +484,15 @@ app.use((err, req, res, next) => {
 });
 
 /* ===========================
+   🏓 KEEP ALIVE
+=========================== */
+setInterval(() => {
+  fetch("https://techmart-backend-ecbi.onrender.com/")
+    .then(() => console.log("🏓 Keep alive ping"))
+    .catch(() => console.log("⚠️ Ping failed"));
+}, 14 * 60 * 1000);
+
+/* ===========================
    🚀 START SERVER
 =========================== */
 const PORT = process.env.PORT || 5002;
