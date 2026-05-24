@@ -1,17 +1,21 @@
+const nodemailer = require("nodemailer"); // <--- MAKE SURE THIS LINE IS HERE!
+
 // Configure the Gmail Transporter with explicit port handling
 const transporter = nodemailer.createTransport({
-    host: "smtp.gmail.com",
-    port: 465,                  // Secure SMTP Port
-    secure: true,                // Use SSL/TLS directly
-    auth: {
-      user: process.env.EMAIL_USER,
-      pass: process.env.EMAIL_PASS,
-    },
-    connectionTimeout: 10000,    // 10 seconds timeout limit
-  });
+  host: "smtp.gmail.com",
+  port: 465,                  // Secure SMTP Port
+  secure: true,                // Use SSL/TLS directly
+  auth: {
+    user: process.env.EMAIL_USER,
+    pass: process.env.EMAIL_PASS,
+  },
+  connectionTimeout: 10000,    // 10 seconds timeout limit
+});
+
 /* ===========================
    📧 ORDER CONFIRMATION
 =========================== */
+// ... rest of your code remains exactly the same ...
 const sendOrderConfirmation = async (order) => {
   const itemsHTML = order.items?.map(item => `
     <tr>
