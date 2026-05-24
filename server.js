@@ -14,6 +14,7 @@ const { Server } = require("socket.io");
 const aiRoutes = require("./routes/ai");
 
 const app = express();
+app.set("trust proxy", 1);
 
 /* ===========================
    🔒 SECURITY
@@ -357,6 +358,103 @@ app.get("/api/admin/stats", adminOnly, async (req, res) => {
   }
 });
 
+/* ===========================
+   👑 ADMIN ROUTES
+=========================== */
+
+/* GET ALL ORDERS */
+app.get("/api/admin/orders", adminOnly, async (req, res) => {
+  try {
+    const orders = await Order.find().sort({ createdAt: -1 });
+    res.json(orders);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Failed to fetch orders" });
+  }
+});
+
+/* UPDATE ORDER STATUS */
+app.put("/api/admin/orders/:id", adminOnly, async (req, res) => {
+  try {
+    const order = await Order.findByIdAndUpdate(
+      req.params.id,
+      { status: req.body.status },
+      { new: true }
+    );
+    res.json(order);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Failed to update order" });
+  }
+});
+
+/* GET ALL USERS */
+app.get("/api/admin/users", adminOnly, async (req, res) => {
+  try {
+    const users = await User.find().select("-password").sort({ createdAt: -1 });
+    res.json(users);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Failed to fetch users" });
+  }
+});
+
+/* DELETE PRODUCT */
+app.delete("/api/products/:id", adminOnly, async (req, res) => {
+  try {
+    await Product.findByIdAndDelete(req.params.id);
+    res.json({ success: true });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Failed to delete product" });
+  }
+});
+
+/* UPDATE PRODUCT */
+app.put("/api/products/:id", adminOnly, async (req, res) => {
+  try {
+    const product = await Product.findByIdAndUpdate(
+      req.params.id,
+      req.body,
+      { new: true }
+    );
+    res.json(product);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Failed to update product" });
+  }
+});
+
+/* ADMIN STATS WITH REVENUE BY DATE */
+app.get("/api/admin/analytics", adminOnly, async (req, res) => {
+  try {
+    const orders = await Order.find().sort({ createdAt: -1 });
+    const users = await User.find();
+
+    const revenue = orders
+      .filter((o) => o.status === "Paid")
+      .reduce((sum, o) => sum + o.amount, 0);
+
+    const revenueByDate = {};
+    orders
+      .filter((o) => o.status === "Paid")
+      .forEach((o) => {
+        const date = new Date(o.createdAt).toLocaleDateString("en-NG");
+        revenueByDate[date] = (revenueByDate[date] || 0) + o.amount;
+      });
+
+    res.json({
+      totalOrders: orders.length,
+      totalUsers: users.length,
+      totalRevenue: revenue,
+      revenueByDate,
+      recentOrders: orders.slice(0, 5),
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Failed to fetch analytics" });
+  }
+});
 /* ===========================
    ⚡ SOCKET.IO
 =========================== */
