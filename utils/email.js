@@ -1,14 +1,14 @@
-const nodemailer = require("nodemailer");
-
-// Configure the Gmail Transporter
+// Configure the Gmail Transporter with explicit port handling
 const transporter = nodemailer.createTransport({
-  service: "gmail",
-  auth: {
-    user: process.env.EMAIL_USER,
-    pass: process.env.EMAIL_PASS,
-  },
-});
-
+    host: "smtp.gmail.com",
+    port: 465,                  // Secure SMTP Port
+    secure: true,                // Use SSL/TLS directly
+    auth: {
+      user: process.env.EMAIL_USER,
+      pass: process.env.EMAIL_PASS,
+    },
+    connectionTimeout: 10000,    // 10 seconds timeout limit
+  });
 /* ===========================
    📧 ORDER CONFIRMATION
 =========================== */
