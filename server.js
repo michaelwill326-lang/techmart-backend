@@ -13,6 +13,7 @@ const { Server } = require("socket.io");
 const Groq = require("groq-sdk");
 
 const aiRoutes = require("./routes/ai");
+const { sendOrderConfirmation, sendWelcomeEmail, sendShippingUpdate } = require("./utils/email");
 
 const app = express();
 app.set("trust proxy", 1);
@@ -164,6 +165,8 @@ app.get("/", (req, res) => {
 /* ===========================
    🔐 AUTH ROUTES
 =========================== */
+
+/* SIGNUP */
 app.post("/api/auth/signup", async (req, res) => {
   try {
     const { name, email, password } = req.body;
@@ -177,6 +180,14 @@ app.post("/api/auth/signup", async (req, res) => {
       process.env.JWT_SECRET,
       { expiresIn: "7d" }
     );
+
+    // 📧 SEND WELCOME EMAIL
+    try {
+      await sendWelcomeEmail(user);
+    } catch (e) {
+      console.log("Welcome email failed:", e.message);
+    }
+
     res.status(201).json({ success: true, token, user });
   } catch (err) {
     console.error(err);
@@ -184,6 +195,7 @@ app.post("/api/auth/signup", async (req, res) => {
   }
 });
 
+/* LOGIN */
 app.post("/api/auth/login", async (req, res) => {
   try {
     const { email, password } = req.body;
@@ -294,7 +306,16 @@ app.post("/api/paystack/init", async (req, res) => {
     const { email, amount, cart } = req.body;
     if (!email || !amount) return res.status(400).json({ error: "Missing payment info" });
     const reference = "TX-" + Date.now();
+
     await Order.create({ email, items: cart, amount, reference, status: "Pending" });
+
+    // 📧 SEND ORDER CONFIRMATION EMAIL
+    try {
+      await sendOrderConfirmation({ email, items: cart, amount, reference });
+    } catch (e) {
+      console.log("Order confirmation email failed:", e.message);
+    }
+
     const response = await axios.post(
       "https://api.paystack.co/transaction/initialize",
       {
@@ -344,6 +365,7 @@ app.get("/api/admin/orders", adminOnly, async (req, res) => {
   }
 });
 
+/* UPDATE ORDER STATUS */
 app.put("/api/admin/orders/:id", adminOnly, async (req, res) => {
   try {
     const order = await Order.findByIdAndUpdate(
@@ -351,6 +373,16 @@ app.put("/api/admin/orders/:id", adminOnly, async (req, res) => {
       { status: req.body.status },
       { new: true }
     );
+
+    // 📧 SEND SHIPPING EMAIL
+    if (req.body.status === "Shipped") {
+      try {
+        await sendShippingUpdate(order);
+      } catch (e) {
+        console.log("Shipping email failed:", e.message);
+      }
+    }
+
     res.json(order);
   } catch (err) {
     console.error(err);
@@ -408,18 +440,15 @@ app.post("/api/products/:id/review", auth, async (req, res) => {
     const product = await Product.findById(req.params.id);
     if (!product) return res.status(404).json({ error: "Product not found" });
 
-    // Check if verified buyer
     const order = await Order.findOne({
       email: req.user.email,
       status: { $in: ["Paid", "Shipped", "Delivered"] },
     });
     const isVerified = !!order;
 
-    // Check if already reviewed
     const alreadyReviewed = product.reviews.find((r) => r.email === req.user.email);
     if (alreadyReviewed) return res.status(400).json({ error: "You already reviewed this product" });
 
-    // Sentiment analysis with Groq
     let sentiment = "neutral";
     try {
       const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
@@ -455,7 +484,6 @@ app.post("/api/products/:id/review", auth, async (req, res) => {
 
     product.reviews.push(review);
 
-    // Update rating from approved reviews only
     const approvedReviews = product.reviews.filter((r) => r.approved);
     if (approvedReviews.length > 0) {
       product.rating = (
