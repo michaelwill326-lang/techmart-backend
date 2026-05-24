@@ -107,14 +107,18 @@ const sendOrderConfirmation = async (order) => {
     </html>
   `;
 
-  await resend.emails.send({
+  const { data, error } = await resend.emails.send({
     from: "TechMart <onboarding@resend.dev>",
     to: order.email,
     subject: `✅ Order Confirmed - ${order.reference}`,
     html,
   });
 
-  console.log(`📧 Order confirmation sent to ${order.email}`);
+  if (error) {
+    console.error(`❌ Resend Order Email Error for ${order.email}:`, error);
+  } else {
+    console.log(`📧 Order confirmation sent successfully to ${order.email}. ID: ${data?.id}`);
+  }
 };
 
 /* ===========================
@@ -178,14 +182,18 @@ const sendWelcomeEmail = async (user) => {
     </html>
   `;
 
-  await resend.emails.send({
+  const { data, error } = await resend.emails.send({
     from: "TechMart <onboarding@resend.dev>",
     to: user.email,
     subject: `🎉 Welcome to TechMart, ${user.name}!`,
     html,
   });
 
-  console.log(`📧 Welcome email sent to ${user.email}`);
+  if (error) {
+    console.error(`❌ Resend Welcome Email Error for ${user.email}:`, error);
+  } else {
+    console.log(`📧 Welcome email sent successfully to ${user.email}. ID: ${data?.id}`);
+  }
 };
 
 /* ===========================
@@ -245,14 +253,18 @@ const sendShippingUpdate = async (order) => {
     </html>
   `;
 
-  await resend.emails.send({
+  const { data, error } = await resend.emails.send({
     from: "TechMart <onboarding@resend.dev>",
     to: order.email,
     subject: `🚚 Your Order ${order.reference} has been Shipped!`,
     html,
   });
 
-  console.log(`📧 Shipping update sent to ${order.email}`);
+  if (error) {
+    console.error(`❌ Resend Shipping Email Error for ${order.email}:`, error);
+  } else {
+    console.log(`📧 Shipping update sent successfully to ${order.email}. ID: ${data?.id}`);
+  }
 };
 
 module.exports = {
