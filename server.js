@@ -72,58 +72,57 @@ mongoose
   .catch((err) => console.error("❌ MongoDB Error:", err));
 
 /* ===========================
-   👤 MODELS
+   📦 ORDER MODEL
 =========================== */
-const User = mongoose.model(
-  "User",
-  new mongoose.Schema({
-    name: String,
-    email: { type: String, unique: true },
-    password: String,
-    role: { type: String, default: "customer" },
-    createdAt: { type: Date, default: Date.now }
-  })
-);
-
-const Product = mongoose.model(
-  "Product",
-  new mongoose.Schema({
-    name: String,
-    price: Number,
-    images: [String],
-    description: String,
-    stock: Number,
-    vendorId: String,
-    vendorName: String,
-    category: String,
-    rating: { type: Number, default: 0 },
-    reviews: [
-      {
-        user: String,
-        email: String,
-        comment: String,
-        stars: Number,
-        verified: { type: Boolean, default: false },
-        approved: { type: Boolean, default: false },
-        flagged: { type: Boolean, default: false },
-        sentiment: { type: String, default: "neutral" },
-        createdAt: { type: Date, default: Date.now }
-      }
-    ],
-    createdAt: { type: Date, default: Date.now }
-  })
-);
-
 const Order = mongoose.model(
   "Order",
   new mongoose.Schema({
     email: String,
+
     items: Array,
+
     amount: Number,
-    status: { type: String, default: "Pending" },
+
     reference: String,
+
     trackingNumber: String,
-    createdAt: { type: Date, default: Date.now }
+
+    carrier: {
+      type: String,
+      default: "TechMart Delivery"
+    },
+
+    status: {
+      type: String,
+      enum: [
+        "Pending",
+        "Paid",
+        "Processing",
+        "Shipped",
+        "Out for Delivery",
+        "Delivered",
+        "Cancelled"
+      ],
+      default: "Pending"
+    },
+
+    timeline: [
+      {
+        status: String,
+
+        message: String,
+
+        time: {
+          type: Date,
+          default: Date.now
+        }
+      }
+    ],
+
+    createdAt: {
+      type: Date,
+      default: Date.now
+    }
   })
 );
 
