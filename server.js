@@ -345,7 +345,7 @@ app.get("/api/admin/stats", adminOnly, async (req, res) => {
     const orders = await Order.find();
     const users = await User.find();
     const revenue = orders
-      .filter((o) => o.status === "Paid")
+      .filter((o) => o.status !== "Cancelled" && o.status !== "Pending")
       .reduce((sum, o) => sum + o.amount, 0);
     res.json({
       totalOrders: orders.length,
@@ -432,12 +432,12 @@ app.get("/api/admin/analytics", adminOnly, async (req, res) => {
     const users = await User.find();
 
     const revenue = orders
-      .filter((o) => o.status === "Paid")
+      .filter((o) => o.status !== "Cancelled" && o.status !== "Pending")
       .reduce((sum, o) => sum + o.amount, 0);
 
     const revenueByDate = {};
     orders
-      .filter((o) => o.status === "Paid")
+      .filter((o) => o.status !== "Cancelled" && o.status !== "Pending")
       .forEach((o) => {
         const date = new Date(o.createdAt).toLocaleDateString("en-NG");
         revenueByDate[date] = (revenueByDate[date] || 0) + o.amount;
