@@ -10,6 +10,7 @@ const http = require("http");
 const helmet = require("helmet");
 const rateLimit = require("express-rate-limit");
 const { Server } = require("socket.io");
+const Groq = require("groq-sdk");
 
 const aiRoutes = require("./routes/ai");
 
@@ -24,9 +25,7 @@ app.use(helmet());
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 300,
-  message: {
-    error: "Too many requests, try again later."
-  }
+  message: { error: "Too many requests, try again later." }
 });
 
 app.use(limiter);
@@ -43,15 +42,9 @@ const allowedOrigins = [
 
 app.use(cors({
   origin: function (origin, callback) {
-    if (!origin) {
-      return callback(null, true);
-    }
-    if (allowedOrigins.includes(origin)) {
-      return callback(null, true);
-    }
-    return callback(
-      new Error("CORS blocked: " + origin)
-    );
+    if (!origin) return callback(null, true);
+    if (allowedOrigins.includes(origin)) return callback(null, true);
+    return callback(new Error("CORS blocked: " + origin));
   },
   credentials: true,
   methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
@@ -75,12 +68,8 @@ app.use("/api/ai", aiRoutes);
 =========================== */
 mongoose
   .connect(process.env.MONGO_URI)
-  .then(() => {
-    console.log("✅ MongoDB Connected");
-  })
-  .catch((err) => {
-    console.error("❌ MongoDB Error:", err);
-  });
+  .then(() => console.log("✅ MongoDB Connected"))
+  .catch((err) => console.error("❌ MongoDB Error:", err));
 
 /* ===========================
    👤 MODELS
@@ -111,8 +100,13 @@ const Product = mongoose.model(
     reviews: [
       {
         user: String,
+        email: String,
         comment: String,
         stars: Number,
+        verified: { type: Boolean, default: false },
+        approved: { type: Boolean, default: false },
+        flagged: { type: Boolean, default: false },
+        sentiment: { type: String, default: "neutral" },
         createdAt: { type: Date, default: Date.now }
       }
     ],
@@ -138,9 +132,7 @@ const Order = mongoose.model(
 =========================== */
 function auth(req, res, next) {
   const token = req.headers.authorization?.split(" ")[1];
-  if (!token) {
-    return res.status(401).json({ error: "No token" });
-  }
+  if (!token) return res.status(401).json({ error: "No token" });
   try {
     req.user = jwt.verify(token, process.env.JWT_SECRET);
     next();
@@ -151,14 +143,10 @@ function auth(req, res, next) {
 
 function adminOnly(req, res, next) {
   const token = req.headers.authorization?.split(" ")[1];
-  if (!token) {
-    return res.status(401).json({ error: "No token" });
-  }
+  if (!token) return res.status(401).json({ error: "No token" });
   try {
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    if (decoded.role !== "admin") {
-      return res.status(403).json({ error: "Admin only" });
-    }
+    if (decoded.role !== "admin") return res.status(403).json({ error: "Admin only" });
     req.user = decoded;
     next();
   } catch {
@@ -176,18 +164,12 @@ app.get("/", (req, res) => {
 /* ===========================
    🔐 AUTH ROUTES
 =========================== */
-
-/* SIGNUP */
 app.post("/api/auth/signup", async (req, res) => {
   try {
     const { name, email, password } = req.body;
-    if (!name || !email || !password) {
-      return res.status(400).json({ error: "All fields required" });
-    }
+    if (!name || !email || !password) return res.status(400).json({ error: "All fields required" });
     const existingUser = await User.findOne({ email });
-    if (existingUser) {
-      return res.status(400).json({ error: "User already exists" });
-    }
+    if (existingUser) return res.status(400).json({ error: "User already exists" });
     const hashedPassword = await bcrypt.hash(password, 10);
     const user = await User.create({ name, email, password: hashedPassword });
     const token = jwt.sign(
@@ -202,18 +184,13 @@ app.post("/api/auth/signup", async (req, res) => {
   }
 });
 
-/* LOGIN */
 app.post("/api/auth/login", async (req, res) => {
   try {
     const { email, password } = req.body;
     const user = await User.findOne({ email });
-    if (!user) {
-      return res.status(400).json({ error: "User not found" });
-    }
+    if (!user) return res.status(400).json({ error: "User not found" });
     const match = await bcrypt.compare(password, user.password);
-    if (!match) {
-      return res.status(400).json({ error: "Wrong password" });
-    }
+    if (!match) return res.status(400).json({ error: "Wrong password" });
     const token = jwt.sign(
       { id: user._id, email: user.email, role: user.role },
       process.env.JWT_SECRET,
@@ -229,8 +206,6 @@ app.post("/api/auth/login", async (req, res) => {
 /* ===========================
    🛍 PRODUCTS
 =========================== */
-
-/* GET ALL PRODUCTS */
 app.get("/api/products", async (req, res) => {
   try {
     const products = await Product.find().sort({ createdAt: -1 });
@@ -241,13 +216,10 @@ app.get("/api/products", async (req, res) => {
   }
 });
 
-/* GET SINGLE PRODUCT */
 app.get("/api/products/:id", async (req, res) => {
   try {
     const product = await Product.findById(req.params.id);
-    if (!product) {
-      return res.status(404).json({ error: "Product not found" });
-    }
+    if (!product) return res.status(404).json({ error: "Product not found" });
     res.json(product);
   } catch (err) {
     console.error(err);
@@ -255,7 +227,6 @@ app.get("/api/products/:id", async (req, res) => {
   }
 });
 
-/* CREATE PRODUCT */
 app.post("/api/products", adminOnly, async (req, res) => {
   try {
     const product = await Product.create(req.body);
@@ -266,11 +237,29 @@ app.post("/api/products", adminOnly, async (req, res) => {
   }
 });
 
+app.put("/api/products/:id", adminOnly, async (req, res) => {
+  try {
+    const product = await Product.findByIdAndUpdate(req.params.id, req.body, { new: true });
+    res.json(product);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Failed to update product" });
+  }
+});
+
+app.delete("/api/products/:id", adminOnly, async (req, res) => {
+  try {
+    await Product.findByIdAndDelete(req.params.id);
+    res.json({ success: true });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Failed to delete product" });
+  }
+});
+
 /* ===========================
    📦 ORDERS
 =========================== */
-
-/* CREATE ORDER */
 app.post("/api/orders", auth, async (req, res) => {
   try {
     const { items, amount } = req.body;
@@ -287,7 +276,6 @@ app.post("/api/orders", auth, async (req, res) => {
   }
 });
 
-/* USER ORDERS */
 app.get("/api/orders/me", auth, async (req, res) => {
   try {
     const orders = await Order.find({ email: req.user.email });
@@ -304,17 +292,9 @@ app.get("/api/orders/me", auth, async (req, res) => {
 app.post("/api/paystack/init", async (req, res) => {
   try {
     const { email, amount, cart } = req.body;
-    if (!email || !amount) {
-      return res.status(400).json({ error: "Missing payment info" });
-    }
+    if (!email || !amount) return res.status(400).json({ error: "Missing payment info" });
     const reference = "TX-" + Date.now();
-    await Order.create({
-      email,
-      items: cart,
-      amount,
-      reference,
-      status: "Pending"
-    });
+    await Order.create({ email, items: cart, amount, reference, status: "Pending" });
     const response = await axios.post(
       "https://api.paystack.co/transaction/initialize",
       {
@@ -347,22 +327,13 @@ app.get("/api/admin/stats", adminOnly, async (req, res) => {
     const revenue = orders
       .filter((o) => o.status !== "Cancelled" && o.status !== "Pending")
       .reduce((sum, o) => sum + (o.amount || 0), 0);
-    res.json({
-      totalOrders: orders.length,
-      totalUsers: users.length,
-      totalRevenue: revenue
-    });
+    res.json({ totalOrders: orders.length, totalUsers: users.length, totalRevenue: revenue });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Failed to fetch stats" });
   }
 });
 
-/* ===========================
-   👑 ADMIN ROUTES
-=========================== */
-
-/* GET ALL ORDERS */
 app.get("/api/admin/orders", adminOnly, async (req, res) => {
   try {
     const orders = await Order.find().sort({ createdAt: -1 });
@@ -373,7 +344,6 @@ app.get("/api/admin/orders", adminOnly, async (req, res) => {
   }
 });
 
-/* UPDATE ORDER STATUS */
 app.put("/api/admin/orders/:id", adminOnly, async (req, res) => {
   try {
     const order = await Order.findByIdAndUpdate(
@@ -388,7 +358,6 @@ app.put("/api/admin/orders/:id", adminOnly, async (req, res) => {
   }
 });
 
-/* GET ALL USERS */
 app.get("/api/admin/users", adminOnly, async (req, res) => {
   try {
     const users = await User.find().select("-password").sort({ createdAt: -1 });
@@ -399,42 +368,13 @@ app.get("/api/admin/users", adminOnly, async (req, res) => {
   }
 });
 
-/* DELETE PRODUCT */
-app.delete("/api/products/:id", adminOnly, async (req, res) => {
-  try {
-    await Product.findByIdAndDelete(req.params.id);
-    res.json({ success: true });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "Failed to delete product" });
-  }
-});
-
-/* UPDATE PRODUCT */
-app.put("/api/products/:id", adminOnly, async (req, res) => {
-  try {
-    const product = await Product.findByIdAndUpdate(
-      req.params.id,
-      req.body,
-      { new: true }
-    );
-    res.json(product);
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "Failed to update product" });
-  }
-});
-
-/* ADMIN STATS WITH REVENUE BY DATE */
 app.get("/api/admin/analytics", adminOnly, async (req, res) => {
   try {
     const orders = await Order.find().sort({ createdAt: -1 });
     const users = await User.find();
-
     const revenue = orders
       .filter((o) => o.status !== "Cancelled" && o.status !== "Pending")
       .reduce((sum, o) => sum + (o.amount || 0), 0);
-
     const revenueByDate = {};
     orders
       .filter((o) => o.status !== "Cancelled" && o.status !== "Pending")
@@ -442,7 +382,6 @@ app.get("/api/admin/analytics", adminOnly, async (req, res) => {
         const date = new Date(o.createdAt).toLocaleDateString("en-NG");
         revenueByDate[date] = (revenueByDate[date] || 0) + o.amount;
       });
-
     res.json({
       totalOrders: orders.length,
       totalUsers: users.length,
@@ -455,52 +394,77 @@ app.get("/api/admin/analytics", adminOnly, async (req, res) => {
     res.status(500).json({ error: "Failed to fetch analytics" });
   }
 });
+
 /* ===========================
    ⭐ REVIEWS
 =========================== */
 
-/* ADD REVIEW */
+/* ADD REVIEW - verified buyers only */
 app.post("/api/products/:id/review", auth, async (req, res) => {
   try {
     const { comment, stars } = req.body;
-
-    if (!comment || !stars) {
-      return res.status(400).json({ error: "Comment and stars required" });
-    }
+    if (!comment || !stars) return res.status(400).json({ error: "Comment and stars required" });
 
     const product = await Product.findById(req.params.id);
+    if (!product) return res.status(404).json({ error: "Product not found" });
 
-    if (!product) {
-      return res.status(404).json({ error: "Product not found" });
-    }
+    // Check if verified buyer
+    const order = await Order.findOne({
+      email: req.user.email,
+      status: { $in: ["Paid", "Shipped", "Delivered"] },
+    });
+    const isVerified = !!order;
 
-    // Check if user already reviewed
-    const alreadyReviewed = product.reviews.find(
-      (r) => r.user === req.user.email
-    );
+    // Check if already reviewed
+    const alreadyReviewed = product.reviews.find((r) => r.email === req.user.email);
+    if (alreadyReviewed) return res.status(400).json({ error: "You already reviewed this product" });
 
-    if (alreadyReviewed) {
-      return res.status(400).json({ error: "You already reviewed this product" });
+    // Sentiment analysis with Groq
+    let sentiment = "neutral";
+    try {
+      const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
+      const sentimentRes = await groq.chat.completions.create({
+        model: "llama-3.3-70b-versatile",
+        messages: [
+          {
+            role: "system",
+            content: `Analyze the sentiment of this product review and respond with ONLY one word: "positive", "negative", or "neutral". Nothing else.`
+          },
+          { role: "user", content: comment }
+        ],
+        max_tokens: 10,
+        temperature: 0,
+      });
+      const raw = sentimentRes.choices[0]?.message?.content?.trim().toLowerCase();
+      if (["positive", "negative", "neutral"].includes(raw)) sentiment = raw;
+    } catch (err) {
+      console.log("Sentiment analysis failed:", err.message);
     }
 
     const review = {
-      user: req.user.email,
+      user: req.user.email.split("@")[0],
+      email: req.user.email,
       comment,
       stars: Number(stars),
+      verified: isVerified,
+      approved: false,
+      flagged: false,
+      sentiment,
       createdAt: new Date(),
     };
 
     product.reviews.push(review);
 
-    // Update average rating
-    product.rating = (
-      product.reviews.reduce((sum, r) => sum + r.stars, 0) /
-      product.reviews.length
-    ).toFixed(1);
+    // Update rating from approved reviews only
+    const approvedReviews = product.reviews.filter((r) => r.approved);
+    if (approvedReviews.length > 0) {
+      product.rating = (
+        approvedReviews.reduce((sum, r) => sum + r.stars, 0) / approvedReviews.length
+      ).toFixed(1);
+    }
 
     await product.save();
-
-    res.json({ success: true, product });
+    res.json({ success: true, message: "Review submitted and pending approval" });
 
   } catch (err) {
     console.error(err);
@@ -508,7 +472,83 @@ app.post("/api/products/:id/review", auth, async (req, res) => {
   }
 });
 
-/* DELETE REVIEW (admin) */
+/* GET PENDING REVIEWS - admin */
+app.get("/api/admin/reviews/pending", adminOnly, async (req, res) => {
+  try {
+    const products = await Product.find({ "reviews.approved": false });
+    const pending = [];
+    products.forEach((p) => {
+      p.reviews
+        .filter((r) => !r.approved && !r.flagged)
+        .forEach((r) => {
+          pending.push({ ...r.toObject(), productId: p._id, productName: p.name });
+        });
+    });
+    res.json(pending);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Failed to fetch pending reviews" });
+  }
+});
+
+/* GET FLAGGED REVIEWS - admin */
+app.get("/api/admin/reviews/flagged", adminOnly, async (req, res) => {
+  try {
+    const products = await Product.find({ "reviews.flagged": true });
+    const flagged = [];
+    products.forEach((p) => {
+      p.reviews
+        .filter((r) => r.flagged)
+        .forEach((r) => {
+          flagged.push({ ...r.toObject(), productId: p._id, productName: p.name });
+        });
+    });
+    res.json(flagged);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Failed to fetch flagged reviews" });
+  }
+});
+
+/* APPROVE REVIEW - admin */
+app.put("/api/products/:id/review/:reviewId/approve", adminOnly, async (req, res) => {
+  try {
+    const product = await Product.findById(req.params.id);
+    const review = product.reviews.id(req.params.reviewId);
+    if (!review) return res.status(404).json({ error: "Review not found" });
+    review.approved = true;
+    review.flagged = false;
+    const approvedReviews = product.reviews.filter((r) => r.approved);
+    if (approvedReviews.length > 0) {
+      product.rating = (
+        approvedReviews.reduce((sum, r) => sum + r.stars, 0) / approvedReviews.length
+      ).toFixed(1);
+    }
+    await product.save();
+    res.json({ success: true });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Failed to approve review" });
+  }
+});
+
+/* FLAG REVIEW */
+app.put("/api/products/:id/review/:reviewId/flag", auth, async (req, res) => {
+  try {
+    const product = await Product.findById(req.params.id);
+    const review = product.reviews.id(req.params.reviewId);
+    if (!review) return res.status(404).json({ error: "Review not found" });
+    review.flagged = true;
+    review.approved = false;
+    await product.save();
+    res.json({ success: true });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Failed to flag review" });
+  }
+});
+
+/* DELETE REVIEW - admin */
 app.delete("/api/products/:id/review/:reviewId", adminOnly, async (req, res) => {
   try {
     const product = await Product.findById(req.params.id);
@@ -522,19 +562,52 @@ app.delete("/api/products/:id/review/:reviewId", adminOnly, async (req, res) => 
     res.status(500).json({ error: "Failed to delete review" });
   }
 });
+
+/* GET SENTIMENT ANALYTICS - admin */
+app.get("/api/admin/reviews/sentiment", adminOnly, async (req, res) => {
+  try {
+    const products = await Product.find();
+    const stats = { positive: 0, negative: 0, neutral: 0, total: 0 };
+    const productSentiments = [];
+
+    products.forEach((p) => {
+      const approved = p.reviews.filter((r) => r.approved);
+      const pos = approved.filter((r) => r.sentiment === "positive").length;
+      const neg = approved.filter((r) => r.sentiment === "negative").length;
+      const neu = approved.filter((r) => r.sentiment === "neutral").length;
+
+      stats.positive += pos;
+      stats.negative += neg;
+      stats.neutral += neu;
+      stats.total += approved.length;
+
+      if (approved.length > 0) {
+        productSentiments.push({
+          name: p.name,
+          positive: pos,
+          negative: neg,
+          neutral: neu,
+          total: approved.length,
+          score: ((pos - neg) / approved.length * 100).toFixed(0),
+        });
+      }
+    });
+
+    productSentiments.sort((a, b) => b.score - a.score);
+    res.json({ stats, productSentiments });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Failed to fetch sentiment data" });
+  }
+});
+
 /* ===========================
    📦 TRACKING
 =========================== */
-
-/* GET ORDER BY REFERENCE */
 app.get("/api/orders/track/:reference", async (req, res) => {
   try {
-    const order = await Order.findOne({
-      reference: req.params.reference
-    });
-    if (!order) {
-      return res.status(404).json({ error: "Order not found" });
-    }
+    const order = await Order.findOne({ reference: req.params.reference });
+    if (!order) return res.status(404).json({ error: "Order not found" });
     res.json(order);
   } catch (err) {
     console.error(err);
@@ -542,12 +615,9 @@ app.get("/api/orders/track/:reference", async (req, res) => {
   }
 });
 
-/* GET MY ORDERS */
 app.get("/api/orders/my", auth, async (req, res) => {
   try {
-    const orders = await Order.find({
-      email: req.user.email
-    }).sort({ createdAt: -1 });
+    const orders = await Order.find({ email: req.user.email }).sort({ createdAt: -1 });
     res.json(orders);
   } catch (err) {
     console.error(err);
@@ -555,7 +625,6 @@ app.get("/api/orders/my", auth, async (req, res) => {
   }
 });
 
-/* UPDATE TRACKING (admin) */
 app.put("/api/orders/:id/tracking", adminOnly, async (req, res) => {
   try {
     const { trackingNumber, status } = req.body;
@@ -564,20 +633,18 @@ app.put("/api/orders/:id/tracking", adminOnly, async (req, res) => {
       { trackingNumber, status },
       { new: true }
     );
-    
-    // Emit socket event to notify customer
     io.emit("orderUpdated", {
       orderId: order._id,
       status: order.status,
       trackingNumber: order.trackingNumber
     });
-
     res.json(order);
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Failed to update tracking" });
   }
 });
+
 /* ===========================
    ⚡ SOCKET.IO
 =========================== */
