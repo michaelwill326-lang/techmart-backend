@@ -299,14 +299,55 @@ app.get("/api/orders/me", auth, async (req, res) => {
 });
 
 /* ===========================
-   💳 PAYSTACK
+   💳 PAYSTACK (INTEGRATED WITH ATOMIC STOCK HANDLING)
 =========================== */
 app.post("/api/paystack/init", async (req, res) => {
   try {
     const { email, amount, cart } = req.body;
-    if (!email || !amount) return res.status(400).json({ error: "Missing payment info" });
-    const reference = "TX-" + Date.now();
+    if (!email || !amount || !cart || cart.length === 0) {
+      return res.status(400).json({ error: "Missing checkout payload information" });
+    }
 
+    const reference = "TX-" + Date.now();
+    const allocatedItems = [];
+
+    // ⚡ RUN ATOMIC CHECK & DECREMENT LOOP FOR ALL CART ITEMS
+    try {
+      for (const item of cart) {
+        // Find item and decrement stock ONLY if existing stock is >= requested qty
+        const updatedProduct = await Product.findOneAndUpdate(
+          {
+            _id: item._id || item.productId,
+            stock: { $gte: item.quantity || 1 }
+          },
+          {
+            $inc: { stock: -(item.quantity || 1) }
+          },
+          { new: true }
+        );
+
+        // If update yields null, it means stock is insufficient
+        if (!updatedProduct) {
+          throw new Error(`Item "${item.name || 'Product'}" is out of stock or unavailable.`);
+        }
+
+        // Log local tracking array to roll back changes if an upcoming item checks out failing
+        allocatedItems.push({
+          productId: item._id || item.productId,
+          quantity: item.quantity || 1
+        });
+      }
+    } catch (stockError) {
+      // 🔄 ROLLBACK COMPLETED DECREMENTS IF THE TRANSACTION CALL ABORTS MID-LOOP
+      for (const rollbackItem of allocatedItems) {
+        await Product.findByIdAndUpdate(rollbackItem.productId, {
+          $inc: { stock: rollbackItem.quantity }
+        });
+      }
+      return res.status(400).json({ error: stockError.message });
+    }
+
+    // Create pending database record since items are locked down securely
     await Order.create({ email, items: cart, amount, reference, status: "Pending" });
 
     // 📧 SEND ORDER CONFIRMATION EMAIL
@@ -334,7 +375,7 @@ app.post("/api/paystack/init", async (req, res) => {
     res.json({ url: response.data.data.authorization_url });
   } catch (err) {
     console.error("PAYSTACK ERROR:", err.response?.data || err.message);
-    res.status(500).json({ error: "Payment failed" });
+    res.status(500).json({ error: "Payment routing setup failed" });
   }
 });
 
