@@ -1,8 +1,10 @@
 const { BrevoClient } = require("@getbrevo/brevo");
-
 const brevo = new BrevoClient({
-  apiKey: process.env.BREVO_API_KEY,
-});
+    apiKey: process.env.BREVO_API_KEY,
+  });
+  
+  // ADD THIS LINE:
+  console.log("🔑 Brevo API Key:", process.env.BREVO_API_KEY ? "Found" : "MISSING");;
 
 const FROM = {
   email: process.env.EMAIL_USER || "michaelwill326@gmail.com",
