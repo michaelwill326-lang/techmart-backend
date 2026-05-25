@@ -1,11 +1,7 @@
-const Brevo = require("@getbrevo/brevo");
+const SibApiV3Sdk = require("@getbrevo/brevo");
 
-const client = Brevo.ApiClient.instance;
-const apiKey = client.authentications["api-key"];
-apiKey.apiKey = process.env.BREVO_API_KEY;
-
-const transactionalEmailsApi = new Brevo.TransactionalEmailsApi();
-
+const apiInstance = new SibApiV3Sdk.TransactionalEmailsApi();
+apiInstance.authentications["api-key"].apiKey = process.env.BREVO_API_KEY;
 const FROM = {
   email: process.env.EMAIL_USER || "michaelwill326@gmail.com",
   name: "TechMart 🛍️"
@@ -116,7 +112,7 @@ const sendOrderConfirmation = async (order) => {
     </html>
   `;
 
-  await transactionalEmailsApi.sendTransacEmail({
+  await apiInstance.sendTransacEmail({
     sender: FROM,
     to: [{ email: order.email }],
     subject: `✅ Order Confirmed - ${order.reference}`,
@@ -187,7 +183,7 @@ const sendWelcomeEmail = async (user) => {
     </html>
   `;
 
-  await transactionalEmailsApi.sendTransacEmail({
+  await apiInstance.sendTransacEmail({
     sender: FROM,
     to: [{ email: user.email }],
     subject: `🎉 Welcome to TechMart, ${user.name}!`,
@@ -254,7 +250,7 @@ const sendShippingUpdate = async (order) => {
     </html>
   `;
 
-  await transactionalEmailsApi.sendTransacEmail({
+  await apiInstance.sendTransacEmail({
     sender: FROM,
     to: [{ email: order.email }],
     subject: `🚚 Your Order ${order.reference} has been Shipped!`,
