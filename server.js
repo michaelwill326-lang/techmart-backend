@@ -14,7 +14,19 @@ const Groq = require("groq-sdk");
 
 const aiRoutes = require("./routes/ai");
 const { sendOrderConfirmation, sendWelcomeEmail, sendShippingUpdate } = require("./utils/email");
+const cloudinary = require("cloudinary").v2;
+const multer = require("multer");
 
+// Configure Cloudinary
+cloudinary.config({
+  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+  api_key: process.env.CLOUDINARY_API_KEY,
+  api_secret: process.env.CLOUDINARY_API_SECRET,
+});
+
+// Multer memory storage
+const storage = multer.memoryStorage();
+const upload = multer({ storage });
 const app = express();
 app.set("trust proxy", 1);
 
@@ -82,10 +94,13 @@ const User = mongoose.model(
     email: { type: String, unique: true },
     password: String,
     role: { type: String, default: "customer" },
+    referralCode: { type: String, unique: true, sparse: true },
+    referredBy: { type: String, default: null },
+    referralCount: { type: Number, default: 0 },
+    referralCredits: { type: Number, default: 0 },
     createdAt: { type: Date, default: Date.now }
   })
 );
-
 const Product = mongoose.model(
   "Product",
   new mongoose.Schema({
@@ -128,6 +143,14 @@ const Order = mongoose.model(
   })
 );
 
+/* ===========================
+   🎁 REFERRAL CODE GENERATOR
+=========================== */
+function generateReferralCode(name) {
+  const clean = name.replace(/\s+/g, "").toUpperCase().slice(0, 5);
+  const random = Math.random().toString(36).substring(2, 6).toUpperCase();
+  return `${clean}${random}`;
+}
 /* ===========================
    🔐 AUTH MIDDLEWARE
 =========================== */
@@ -174,18 +197,7 @@ app.post("/api/auth/signup", async (req, res) => {
     const existingUser = await User.findOne({ email });
     if (existingUser) return res.status(400).json({ error: "User already exists" });
     const hashedPassword = await bcrypt.hash(password, 10);
-    const referralCode = generateReferralCode(name);
-    const user = await User.create({ name, email, password: hashedPassword, referralCode, referredBy: req.body.referralCode || null });
-    // Reward referrer
-    if (req.body.referralCode) {
-      const referrer = await User.findOne({ referralCode: req.body.referralCode });
-      if (referrer) {
-        referrer.referralCount += 1;
-        referrer.referralCredits += 500;
-        await referrer.save();
-        console.log(`🎁 Referral credit added to ${referrer.email}`);
-      }
-    }
+    const user = await User.create({ name, email, password: hashedPassword });
     const token = jwt.sign(
       { id: user._id, email: user.email, role: user.role },
       process.env.JWT_SECRET,
@@ -778,7 +790,42 @@ app.put("/api/orders/:id/tracking", adminOnly, async (req, res) => {
     res.status(500).json({ error: "Failed to update tracking" });
   }
 });
+/* ===========================
+   🖼️ IMAGE UPLOAD
+=========================== */
+app.post("/api/upload", adminOnly, upload.single("image"), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: "No image provided" });
 
+    // Upload to Cloudinary
+    const result = await new Promise((resolve, reject) => {
+      cloudinary.uploader.upload_stream(
+        {
+          folder: "techmart/products",
+          transformation: [
+            { width: 800, height: 800, crop: "limit" },
+            { quality: "auto" },
+            { fetch_format: "auto" }
+          ]
+        },
+        (error, result) => {
+          if (error) reject(error);
+          else resolve(result);
+        }
+      ).end(req.file.buffer);
+    });
+
+    res.json({
+      success: true,
+      url: result.secure_url,
+      public_id: result.public_id,
+    });
+
+  } catch (err) {
+    console.error("Upload error:", err);
+    res.status(500).json({ error: "Image upload failed" });
+  }
+});
 /* ===========================
    ⚡ SOCKET.IO
 =========================== */
