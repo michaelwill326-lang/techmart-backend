@@ -1,10 +1,12 @@
 const Brevo = require("@getbrevo/brevo");
 
-const defaultClient = Brevo.ApiClient.instance;
-const apiKey = defaultClient.authentications["api-key"];
-apiKey.apiKey = process.env.BREVO_API_KEY;
-
+// 1. Initialize the transactional emails API instance
 const brevo = new Brevo.TransactionalEmailsApi();
+
+// 2. Assign your API key using the correct enum configuration for the new SDK
+brevo.setApiKey(Brevo.TransactionalEmailsApiApiKeys.apiKey, process.env.BREVO_API_KEY);
+
+// 3. Define your default verified sender identity
 const FROM = { email: "no-reply@techmart.com", name: "TechMart" }; 
 
 /* =========================================================================
@@ -59,12 +61,7 @@ const sendOrderConfirmation = async (order) => {
       </html>
     `;
 
-    // Resilient calling architecture that works regardless of your library SDK version
-    const sendMethod = brevo.transactionalEmails?.sendTransacEmail 
-      ? brevo.transactionalEmails.sendTransacEmail.bind(brevo.transactionalEmails)
-      : brevo.sendTransacEmail.bind(brevo);
-
-    await sendMethod({
+    await brevo.sendTransacEmail({
       sender: FROM,
       to: [{ email: order.email }],
       subject: `🛒 TechMart Order Confirmation [${order.reference}]`,
@@ -139,11 +136,7 @@ const sendWelcomeEmail = async (user) => {
       </html>
     `;
 
-    const sendMethod = brevo.transactionalEmails?.sendTransacEmail 
-      ? brevo.transactionalEmails.sendTransacEmail.bind(brevo.transactionalEmails)
-      : brevo.sendTransacEmail.bind(brevo);
-
-    await sendMethod({
+    await brevo.sendTransacEmail({
       sender: FROM,
       to: [{ email: user.email }],
       subject: `🎉 Welcome to TechMart, ${user.name}!`,
@@ -214,11 +207,7 @@ const sendShippingUpdate = async (order) => {
       </html>
     `;
 
-    const sendMethod = brevo.transactionalEmails?.sendTransacEmail 
-      ? brevo.transactionalEmails.sendTransacEmail.bind(brevo.transactionalEmails)
-      : brevo.sendTransacEmail.bind(brevo);
-
-    await sendMethod({
+    await brevo.sendTransacEmail({
       sender: FROM,
       to: [{ email: order.email }],
       subject: `🚚 Your Order ${order.reference} has been Shipped!`,
