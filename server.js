@@ -871,3 +871,38 @@ const PORT = process.env.PORT || 5002;
 server.listen(PORT, () => {
   console.log(`🚀 Server running on port ${PORT}`);
 });
+// --- ADMIN FILE UPLOAD ROUTE INTEGRATION ---
+const { upload: adminUploader, cloudinary: cloudinaryCloud } = require("./utils/uploader");
+// Product model already imported above
+
+app.post("/api/admin/products/add", adminUploader.single("image"), async (req, res) => {
+  try {
+    let imageUrl = "";
+
+    if (req.file) {
+      console.log(`📡 Inbound binary stream detected: ${req.file.originalname}`);
+      const result = await cloudinaryCloud.uploader.upload(req.file.path, {
+        folder: "techmart_products"
+      });
+      imageUrl = result.secure_url;
+      console.log(`✅ Asset successfully deployed to Cloudinary: ${imageUrl}`);
+    } else {
+      return res.status(400).json({ message: "Product image asset is required." });
+    }
+
+    const newProduct = new Product({
+      name: req.body.name,
+      price: Number(req.body.price),
+      description: req.body.description,
+      stock: Number(req.body.stock),
+      image: imageUrl
+    });
+
+    await newProduct.save();
+    console.log(`📦 Database updated! Created inventory item: ${newProduct.name}`);
+    res.status(201).json({ success: true, data: newProduct });
+  } catch (error) {
+    console.error("❌ UPLOAD EXCEPTION:", error);
+    res.status(500).json({ message: error.message });
+  }
+});
