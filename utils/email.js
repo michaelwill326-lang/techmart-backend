@@ -1,12 +1,19 @@
 const { BrevoClient } = require("@getbrevo/brevo");
 
-// 1. Initialize the modern BrevoClient directly with your key
+// 🔍 Runtime Environment Diagnostics Check
+if (!process.env.BREVO_API_KEY) {
+  console.error("❌ DEPLOYMENT CRITICAL: process.env.BREVO_API_KEY is undefined or empty inside Render environment settings!");
+} else {
+  console.log(`📡 BREVO ENV CHECK: Key is present (Length: ${process.env.BREVO_API_KEY.length} chars)`);
+}
+
+// 1. Initialize the modern BrevoClient directly with your key (safeguarded against spaces)
 const brevo = new BrevoClient({
-  apiKey: process.env.BREVO_API_KEY,
+  apiKey: process.env.BREVO_API_KEY ? process.env.BREVO_API_KEY.trim() : "",
 });
 
 // 2. Define your default verified sender identity
-const FROM = { email: "no-reply@techmart.com", name: "TechMart" }; 
+const FROM = { email: "michaelwill326@gmail.com", name: "TechMart" };
 
 /* =========================================================================
    💳 ORDER CONFIRMATION EMAIL (WITH NAIRA CALCULATIONS)
