@@ -174,7 +174,18 @@ app.post("/api/auth/signup", async (req, res) => {
     const existingUser = await User.findOne({ email });
     if (existingUser) return res.status(400).json({ error: "User already exists" });
     const hashedPassword = await bcrypt.hash(password, 10);
-    const user = await User.create({ name, email, password: hashedPassword });
+    const referralCode = generateReferralCode(name);
+    const user = await User.create({ name, email, password: hashedPassword, referralCode, referredBy: req.body.referralCode || null });
+    // Reward referrer
+    if (req.body.referralCode) {
+      const referrer = await User.findOne({ referralCode: req.body.referralCode });
+      if (referrer) {
+        referrer.referralCount += 1;
+        referrer.referralCredits += 500;
+        await referrer.save();
+        console.log(`🎁 Referral credit added to ${referrer.email}`);
+      }
+    }
     const token = jwt.sign(
       { id: user._id, email: user.email, role: user.role },
       process.env.JWT_SECRET,
