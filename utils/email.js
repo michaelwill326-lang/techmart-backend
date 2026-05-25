@@ -1,12 +1,11 @@
-const Brevo = require("@getbrevo/brevo");
+const { BrevoClient } = require("@getbrevo/brevo");
 
-// 1. Initialize the transactional emails API instance
-const brevo = new Brevo.TransactionalEmailsApi();
+// 1. Initialize the modern BrevoClient directly with your key
+const brevo = new BrevoClient({
+  apiKey: process.env.BREVO_API_KEY,
+});
 
-// 2. Assign your API key using the correct enum configuration for the new SDK
-brevo.setApiKey(Brevo.TransactionalEmailsApiApiKeys.apiKey, process.env.BREVO_API_KEY);
-
-// 3. Define your default verified sender identity
+// 2. Define your default verified sender identity
 const FROM = { email: "no-reply@techmart.com", name: "TechMart" }; 
 
 /* =========================================================================
@@ -61,7 +60,7 @@ const sendOrderConfirmation = async (order) => {
       </html>
     `;
 
-    await brevo.sendTransacEmail({
+    await brevo.transactionalEmails.sendTransacEmail({
       sender: FROM,
       to: [{ email: order.email }],
       subject: `🛒 TechMart Order Confirmation [${order.reference}]`,
@@ -136,7 +135,7 @@ const sendWelcomeEmail = async (user) => {
       </html>
     `;
 
-    await brevo.sendTransacEmail({
+    await brevo.transactionalEmails.sendTransacEmail({
       sender: FROM,
       to: [{ email: user.email }],
       subject: `🎉 Welcome to TechMart, ${user.name}!`,
@@ -207,7 +206,7 @@ const sendShippingUpdate = async (order) => {
       </html>
     `;
 
-    await brevo.sendTransacEmail({
+    await brevo.transactionalEmails.sendTransacEmail({
       sender: FROM,
       to: [{ email: order.email }],
       subject: `🚚 Your Order ${order.reference} has been Shipped!`,
