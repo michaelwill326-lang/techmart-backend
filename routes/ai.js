@@ -61,7 +61,7 @@ ${catalogContext}`
 
     // 5. Query Groq
     const completion = await groq.chat.completions.create({
-      model: "llama-3.3-70b-speculator", 
+      model: "llama-3.3-70b-versatile", 
       messages: messagesPayload,
       temperature: 0.7,
       max_tokens: 500,
