@@ -298,9 +298,11 @@ app.get("/api/orders/me", auth, async (req, res) => {
   }
 });
 
-/* ===========================
-   💳 PAYSTACK (INTEGRATED WITH ATOMIC STOCK HANDLING)
-=========================== */
+/* =========================================================================
+   💳 PAYSTACK (INTEGRATED WITH ATOMIC STOCK HANDLING & IDEMPOTENT WEBHOOK)
+========================================================================= */
+
+/* 1. INITIALIZE TRANSACTION & LOCK STOCK */
 app.post("/api/paystack/init", async (req, res) => {
   try {
     const { email, amount, cart } = req.body;
@@ -376,6 +378,58 @@ app.post("/api/paystack/init", async (req, res) => {
   } catch (err) {
     console.error("PAYSTACK ERROR:", err.response?.data || err.message);
     res.status(500).json({ error: "Payment routing setup failed" });
+  }
+});
+
+/* 2. SECURE & IDEMPOTENT WEBHOOK RECEIVER */
+app.post("/api/paystack/webhook", async (req, res) => {
+  try {
+    const crypto = require("crypto");
+    const hash = crypto
+      .createHmac("sha512", process.env.PAYSTACK_SECRET_KEY)
+      .update(JSON.stringify(req.body))
+      .digest("hex");
+
+    if (hash !== req.headers["x-paystack-signature"]) {
+      return res.status(401).json({ error: "Invalid webhook signature token" });
+    }
+
+    const event = req.body;
+
+    if (event.event === "charge.success") {
+      const { reference, customer } = event.data;
+
+      console.log(`📦 Processing webhook for Reference: ${reference}`);
+
+      // ENFORCE IDEMPOTENCY VIA MONGOOSE CONDITIONAL UPDATE
+      const updatedOrder = await Order.findOneAndUpdate(
+        { 
+          reference: reference,
+          status: "Pending" 
+        },
+        { 
+          $set: { status: "Paid" } 
+        },
+        { new: true }
+      );
+
+      if (!updatedOrder) {
+        console.log(`⚠️ Webhook Ignored: Reference ${reference} was already marked as Paid or doesn't exist.`);
+        return res.status(200).json({ status: "success", message: "Already processed" });
+      }
+
+      console.log(`✅ Order ${reference} successfully confirmed and updated via webhook.`);
+      
+      if (io) {
+        io.emit("paymentConfirmed", { reference, email: customer.email });
+      }
+    }
+
+    return res.status(200).json({ status: "success" });
+
+  } catch (err) {
+    console.error("❌ WEBHOOK ERROR:", err.message);
+    return res.status(500).json({ error: "Webhook system processing failed" });
   }
 });
 
