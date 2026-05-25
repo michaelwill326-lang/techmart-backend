@@ -12,11 +12,7 @@ const rateLimit = require("express-rate-limit");
 const { Server } = require("socket.io");
 const Groq = require("groq-sdk");
 
-// 1. Establish database connection models at root layer
-const Product = mongoose.models.Product || mongoose.model("Product"); 
-
-// 2. Pass Product model down into your AI routes instantly
-const aiRoutes = require("./routes/ai")(Product); 
+const aiRoutes = require("./routes/ai");
 const { sendOrderConfirmation, sendWelcomeEmail, sendShippingUpdate } = require("./utils/email");
 
 const app = express();
