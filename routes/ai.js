@@ -12,7 +12,7 @@ const groq = new Groq({
 ========================================================================= */
 router.post("/chat", async (req, res) => {
   try {
-    const { message, history = [], userEmail = "Guest" } = req.body;
+    const { message, history = [], userEmail = "Guest", userName = "Guest" } = req.body;
 
     if (!message) {
       return res.status(400).json({
@@ -36,7 +36,7 @@ router.post("/chat", async (req, res) => {
       role: "system",
       content: `You are the brilliant, witty, and incredibly helpful AI Sales Assistant for TechMart, Nigeria's elite e-commerce store for gadgets and electronics.
       
-CURRENT USER CONTEXT: You are chatting with user: ${userEmail}.
+CURRENT USER CONTEXT: You are chatting with: ${userName !== "Guest" ? userName : "a guest"}. Greet them by first name when appropriate.
 
 YOUR STRICT RULES:
 1. ALWAYS quote all prices in Nigerian Naira using the '₦' symbol (e.g., ₦50,000). Never use dollars ($) or any other currency.
